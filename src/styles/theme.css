@@ -1,0 +1,327 @@
+@custom-variant dark (&:is([data-theme="dark"] *));
+
+:root {
+  --font-size: 16px;
+  --background: #1f1e1f;
+  --foreground: oklch(0.145 0 0);
+  --card: #ffffff;
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: #030213;
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.95 0.0058 264.53);
+  --secondary-foreground: #030213;
+  --muted: #ececf0;
+  --muted-foreground: #717182;
+  --accent: #e9ebef;
+  --accent-foreground: #030213;
+  --destructive: #d4183d;
+  --destructive-foreground: #ffffff;
+  --border: rgba(0, 0, 0, 0.1);
+  --input: transparent;
+  --input-background: #f3f3f5;
+  --switch-background: #cbced4;
+  --font-weight-medium: 500;
+  --font-weight-normal: 400;
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: #030213;
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+/* ═══════════════════════════════════════════════════════
+   Game-specific theme tokens — "Make 4"
+   These power the light/dark toggle across all game screens.
+   ═══════════════════════════════════════════════════════ */
+
+/* Dark mode (default) */
+[data-theme="dark"], :root:not([data-theme="light"]) {
+  --g-bg: #1E1E1E;
+  --g-bg-elevated: #2C2C2C;
+  --g-surface: rgba(255,255,255,0.06);
+  --g-surface-hover: rgba(255,255,255,0.1);
+  --g-surface-subtle: rgba(255,255,255,0.03);
+  --g-surface-faint: rgba(255,255,255,0.02);
+  --g-text: white;
+  --g-text-bright: rgba(255,255,255,0.85);
+  --g-text-secondary: rgba(255,255,255,0.7);
+  --g-text-muted: rgba(255,255,255,0.5);
+  --g-text-faint: rgba(255,255,255,0.35);
+  --g-text-dim: rgba(255,255,255,0.25);
+  --g-text-ghost: rgba(255,255,255,0.15);
+  --g-border: rgba(255,255,255,0.1);
+  --g-border-subtle: rgba(255,255,255,0.06);
+  --g-border-light: rgba(255,255,255,0.08);
+  --g-border-hover: rgba(255,255,255,0.15);
+  --g-border-strong: rgba(255,255,255,0.12);
+  --g-overlay: rgba(0,0,0,0.75);
+  --g-overlay-light: rgba(0,0,0,0.65);
+  --g-board-frame-start: #2C2C2C;
+  --g-board-frame-end: #1E1E1E;
+  --g-board-border: #383838;
+  --g-board-inner-start: #0D0D2B;
+  --g-board-inner-end: #0A0A1F;
+  --g-board-inner-border: rgba(162,89,255,0.2);
+  --g-cell-border: rgba(255,255,255,0.06);
+  --g-cell-empty-center: rgba(255,255,255,0.04);
+  --g-cell-empty-edge: rgba(255,255,255,0.01);
+  --g-card-red: #2A1D1A;
+  --g-card-yellow: #2A2618;
+  --g-card-inactive: #1E1E1E;
+  --g-winner-bg-start: #2C2C2C;
+  --g-winner-bg-end: #1E1E1E;
+  --g-grid-dot: white;
+  --g-cross-line: white;
+  --g-kbd-bg: rgba(255,255,255,0.12);
+  --g-kbd-text: rgba(255,255,255,0.7);
+  --g-divider: rgba(255,255,255,0.08);
+  --g-divider-subtle: rgba(255,255,255,0.06);
+  --g-input-bg: rgba(255,255,255,0.06);
+  --g-input-border: rgba(255,255,255,0.12);
+  --g-input-text: white;
+  --g-grid-opacity: 0.04;
+  --g-feet-color: #383838;
+  --g-tooltip-bg: rgba(30,30,30,0.95);
+  --g-scrollbar-thumb: rgba(255,255,255,0.1);
+  --g-scrollbar-hover: rgba(255,255,255,0.2);
+  --g-qr-fg: #1E1E1E;
+  --g-shadow-sm: rgba(0,0,0,0.15);
+  --g-shadow-md: rgba(0,0,0,0.3);
+  --g-shadow-lg: rgba(0,0,0,0.5);
+  --g-shadow-xl: rgba(0,0,0,0.6);
+  --g-yellow: #FFBF00;
+  --g-yellow-muted: rgba(255,191,0,0.6);
+}
+
+/* Light mode */
+[data-theme="light"] {
+  --g-bg: #F5F3F0;
+  --g-bg-elevated: #E8E5E0;
+  --g-surface: rgba(0,0,0,0.06);
+  --g-surface-hover: rgba(0,0,0,0.10);
+  --g-surface-subtle: rgba(0,0,0,0.04);
+  --g-surface-faint: rgba(0,0,0,0.03);
+  --g-text: #2C2C2C;
+  --g-text-bright: #333333;
+  --g-text-secondary: #4A4A4A;
+  --g-text-muted: #666666;
+  --g-text-faint: #888888;
+  --g-text-dim: #999999;
+  --g-text-ghost: #AAAAAA;
+  --g-border: rgba(0,0,0,0.15);
+  --g-border-subtle: rgba(0,0,0,0.08);
+  --g-border-light: rgba(0,0,0,0.10);
+  --g-border-hover: rgba(0,0,0,0.20);
+  --g-border-strong: rgba(0,0,0,0.15);
+  --g-overlay: rgba(0,0,0,0.5);
+  --g-overlay-light: rgba(0,0,0,0.35);
+  --g-board-frame-start: #C5C1BA;
+  --g-board-frame-end: #B0ACA5;
+  --g-board-border: #9A968F;
+  --g-board-inner-start: #B5B2D4;
+  --g-board-inner-end: #A8A5C8;
+  --g-board-inner-border: rgba(162,89,255,0.45);
+  --g-cell-border: rgba(0,0,0,0.14);
+  --g-cell-empty-center: rgba(0,0,0,0.08);
+  --g-cell-empty-edge: rgba(0,0,0,0.03);
+  --g-card-red: #FFF2EE;
+  --g-card-yellow: #FFFAE8;
+  --g-card-inactive: #F5F3F0;
+  --g-winner-bg-start: #EDEAE6;
+  --g-winner-bg-end: #F5F3F0;
+  --g-grid-dot: #999;
+  --g-cross-line: #999;
+  --g-kbd-bg: rgba(0,0,0,0.08);
+  --g-kbd-text: #555;
+  --g-divider: rgba(0,0,0,0.10);
+  --g-divider-subtle: rgba(0,0,0,0.06);
+  --g-input-bg: rgba(0,0,0,0.05);
+  --g-input-border: rgba(0,0,0,0.15);
+  --g-input-text: #2C2C2C;
+  --g-grid-opacity: 0.08;
+  --g-feet-color: #9A968F;
+  --g-tooltip-bg: rgba(255,255,255,0.95);
+  --g-scrollbar-thumb: rgba(0,0,0,0.15);
+  --g-scrollbar-hover: rgba(0,0,0,0.25);
+  --g-qr-fg: #2C2C2C;
+  --g-shadow-sm: rgba(0,0,0,0.06);
+  --g-shadow-md: rgba(0,0,0,0.10);
+  --g-shadow-lg: rgba(0,0,0,0.15);
+  --g-shadow-xl: rgba(0,0,0,0.18);
+  --g-yellow: #8B6F00;
+  --g-yellow-muted: rgba(139,111,0,0.7);
+  --background: #F5F3F0;
+}
+
+/* Dead .dark {} block removed — shadcn components are unused;
+   dark mode is unified to [data-theme="dark"] above. */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-input-background: var(--input-background);
+  --color-switch-background: var(--switch-background);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* ── Figma brand colors ── */
+  --color-figma-red: #F24E1E;
+  --color-figma-yellow: #FFBF00;
+  --color-figma-purple: #A259FF;
+  --color-figma-blue: #1ABCFE;
+  --color-figma-green: #0ACF83;
+
+  /* ── Fluid type scale (clamp-based) ──
+     Provides subtle scaling between mobile (375px) and desktop (1440px).
+     Game components use text-2xs…text-4xl; shadcn is unused. */
+  --text-2xs: clamp(0.5625rem, 0.54rem + 0.06vw, 0.625rem);   /* ~9px → 10px  */
+  --text-xs:  clamp(0.6875rem, 0.66rem + 0.07vw, 0.75rem);    /* 11px → 12px  */
+  --text-sm:  clamp(0.8125rem, 0.79rem + 0.06vw, 0.875rem);   /* 13px → 14px  */
+  --text-base: clamp(0.9375rem, 0.91rem + 0.07vw, 1rem);      /* 15px → 16px  */
+  --text-lg:  clamp(1.0625rem, 1.03rem + 0.08vw, 1.125rem);   /* 17px → 18px  */
+  --text-xl:  clamp(1.25rem, 1.2rem + 0.13vw, 1.375rem);      /* 20px → 22px  */
+  --text-2xl: clamp(1.5rem, 1.425rem + 0.2vw, 1.75rem);       /* 24px → 28px  */
+  --text-3xl: clamp(1.75rem, 1.65rem + 0.25vw, 2rem);         /* 28px → 32px  */
+  --text-4xl: clamp(2.25rem, 2.1rem + 0.4vw, 2.75rem);        /* 36px → 44px  */
+
+  /* ── Game theme tokens (bridged from --g-* CSS vars) ── */
+  --color-g-bg: var(--g-bg);
+  --color-g-bg-elevated: var(--g-bg-elevated);
+  --color-g-surface: var(--g-surface);
+  --color-g-surface-hover: var(--g-surface-hover);
+  --color-g-surface-subtle: var(--g-surface-subtle);
+  --color-g-surface-faint: var(--g-surface-faint);
+  --color-g-text: var(--g-text);
+  --color-g-text-bright: var(--g-text-bright);
+  --color-g-text-secondary: var(--g-text-secondary);
+  --color-g-text-muted: var(--g-text-muted);
+  --color-g-text-faint: var(--g-text-faint);
+  --color-g-text-dim: var(--g-text-dim);
+  --color-g-text-ghost: var(--g-text-ghost);
+  --color-g-border: var(--g-border);
+  --color-g-border-subtle: var(--g-border-subtle);
+  --color-g-border-light: var(--g-border-light);
+  --color-g-border-hover: var(--g-border-hover);
+  --color-g-border-strong: var(--g-border-strong);
+  --color-g-overlay: var(--g-overlay);
+  --color-g-overlay-light: var(--g-overlay-light);
+  --color-g-divider: var(--g-divider);
+  --color-g-divider-subtle: var(--g-divider-subtle);
+  --color-g-input-bg: var(--g-input-bg);
+  --color-g-input-border: var(--g-input-border);
+  --color-g-input-text: var(--g-input-text);
+  --color-g-kbd-bg: var(--g-kbd-bg);
+  --color-g-kbd-text: var(--g-kbd-text);
+  --color-g-yellow: var(--g-yellow);
+  --color-g-yellow-muted: var(--g-yellow-muted);
+  --color-g-shadow-sm: var(--g-shadow-sm);
+  --color-g-shadow-md: var(--g-shadow-md);
+  --color-g-shadow-lg: var(--g-shadow-lg);
+  --color-g-shadow-xl: var(--g-shadow-xl);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'figmaSans', 'figmaSans Fallback', SF Pro Display, system-ui, helvetica, sans-serif;
+  }
+
+  /**
+  * Default typography styles for HTML elements (h1-h4, p, label, button, input).
+  * These are in @layer base, so Tailwind utility classes (like text-sm, text-lg) automatically override them.
+  */
+
+  html {
+    font-size: var(--font-size);
+  }
+
+  h1 {
+    font-size: var(--text-2xl);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  h2 {
+    font-size: var(--text-xl);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  h3 {
+    font-size: var(--text-lg);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  h4 {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  label {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  button {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-medium);
+    line-height: 1.5;
+  }
+
+  input {
+    font-size: var(--text-base);
+    font-weight: var(--font-weight-normal);
+    line-height: 1.5;
+  }
+}

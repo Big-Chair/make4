@@ -1,0 +1,135 @@
+@import './fonts.css';
+@import './tailwind.css';
+@import './theme.css';
+
+/* Custom scrollbar for leaderboard */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--g-scrollbar-thumb);
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--g-scrollbar-hover);
+}
+
+/* ═══════════════════════════════════════════════════════
+   Light mode neutral color adaptation
+   Override the hardcoded rgba(255,255,255,...) patterns
+   used throughout game components for light mode.
+   ═══════════════════════════════════════════════════════ */
+[data-theme="light"] {
+  /* Neutral surfaces */
+  color-scheme: light;
+}
+
+/* Adapt icon/text colors that use white-alpha */
+[data-theme="light"] .lucide,
+[data-theme="light"] [style*="rgba(255,255,255,"] {
+  /* These can't be targeted by CSS on inline styles, handled by components */
+}
+
+/* ═══════════════════════════════════════════════════════
+   Extracted utility classes for repeated game UI patterns
+   ═══════════════════════════════════════════════════════ */
+
+/* Caps label — used 15+ times across StartScreen, OnlineLobby, GameUI */
+.label-caps {
+  font-size: var(--text-sm);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--g-text-dim);
+}
+
+.label-caps-sm {
+  font-size: var(--text-xs);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--g-text-dim);
+}
+
+/* Keyboard key chip */
+.kbd-key {
+  background: var(--g-kbd-bg);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: var(--text-sm);
+  color: var(--g-kbd-text);
+}
+
+/* Horizontal fade divider — used 5+ times */
+.divider-fade {
+  height: 1px;
+  max-width: 280px;
+  background: linear-gradient(90deg, transparent, var(--g-divider) 30%, var(--g-divider) 70%, transparent);
+}
+
+/* Stat value — tabular numerals with brand color */
+.stat-value {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Score number — tabular numerals */
+.score-num {
+  font-size: var(--text-lg);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* Vertical thin divider */
+.divider-v {
+  width: 1px;
+  background: var(--g-border);
+}
+
+/* Step number badge */
+.step-badge {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Step body text */
+.step-title {
+  font-size: var(--text-sm);
+  color: var(--g-text-bright);
+  font-weight: 700;
+}
+.step-desc {
+  font-size: var(--text-sm);
+  color: var(--g-text-muted);
+  margin-top: 3px;
+  line-height: 1.6;
+}
+
+/* Share method chip */
+.share-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--g-surface);
+  border: 1px solid var(--g-border);
+  color: var(--g-text-muted);
+  font-size: var(--text-xs);
+}
+
+/* Icon button (TopBar) */
+.icon-btn {
+  background: var(--g-surface-subtle);
+  border: 1px solid var(--g-border);
+}
