@@ -416,3 +416,4 @@ enabled = true
 [functions.make-server-59149df1]
 enabled = true
 verify_jwt = true
+entrypoint = "./functions/make-server-59149df1/index.tsx"

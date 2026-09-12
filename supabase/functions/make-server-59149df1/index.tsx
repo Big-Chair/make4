@@ -1,7 +1,7 @@
-import { Hono } from "npm:hono";
-import { cors } from "npm:hono/cors";
-import { logger } from "npm:hono/logger";
-import { createClient } from "npm:@supabase/supabase-js";
+import { Hono } from "npm:hono@4.13.7";
+import { cors } from "npm:hono@4.13.7/cors";
+import { logger } from "npm:hono@4.13.7/logger";
+import { createClient } from "npm:@supabase/supabase-js@2.115.0";
 import type { Database } from "./database.types.ts";
 
 type Tables = Database["public"]["Tables"];
