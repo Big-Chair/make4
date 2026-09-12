@@ -10,3 +10,7 @@ dist/
 .DS_Store
 Thumbs.db
 *.log
+
+# Supabase CLI local state (may contain secrets)
+supabase/.branches/
+supabase/.temp/
