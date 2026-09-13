@@ -57,6 +57,16 @@ function newId(prefix: "match" | "resync"): string {
  * the guest requests it (or the host pushes it when the host saw the gap), the
  * guest restores it atomically and acknowledges the revision, and only then do
  * input and the timer resume.
+ *
+ * Reconnect reuses the same handshake. The Room pauses the Match when a channel
+ * or a participant's Presence is lost; once both sessions are live again its
+ * transport becomes `resynchronizing` and the Match starts the handshake from
+ * both ends — the guest requests the snapshot and the host pushes it — because
+ * either peer may be the only one that noticed. A peer still waiting for the
+ * other session ignores the handshake (it could not resume anyway) and starts
+ * its own once the Room is resynchronizing. A guest that is already ready and
+ * receives a snapshot identical to its Match only acknowledges it, so a
+ * duplicate snapshot never pauses the Match a second time.
  */
 export interface UseMatchOptions {
   gameMode: GameMode;
@@ -145,8 +155,12 @@ export function useMatch({
   const revisionRef = useRef(0);
   /** The Match identity whose winner has been recorded. */
   const recordedMatchIdRef = useRef<string | null>(null);
-  /** Host: the snapshot request awaiting the guest's acknowledgement. */
-  const pendingSnapshotRef = useRef<string | null>(null);
+  /** Host: snapshots sent this resynchronization, any of whose acknowledgement resumes. */
+  const pendingSnapshotIdsRef = useRef(new Set<string>());
+  /** A snapshot handshake is under way for the current resynchronization. */
+  const handshakeRef = useRef(false);
+  /** Starts the handshake from this peer's end; set by the transport effect. */
+  const beginHandshakeRef = useRef<(() => void) | null>(null);
 
   // Refs keep the transport handler pointed at the freshest state and callbacks.
   const gameRef = useRef(game);
@@ -191,8 +205,20 @@ export function useMatch({
       };
     };
 
+    /** Everything a snapshot restores except clocks, for spotting a duplicate. */
+    const matchContent = (snapshot: MatchSnapshot) =>
+      JSON.stringify([
+        snapshot.matchId,
+        snapshot.revision,
+        snapshot.board,
+        snapshot.currentPlayer,
+        snapshot.winner,
+        snapshot.redBlastToken,
+        snapshot.yellowBlastToken,
+      ]);
+
     const sendSnapshot = (requestId: string) => {
-      pendingSnapshotRef.current = requestId;
+      pendingSnapshotIdsRef.current.add(requestId);
       void transport.send({
         protocolVersion: PROTOCOL_VERSION,
         type: "snapshot",
@@ -211,8 +237,8 @@ export function useMatch({
       setBlastMode(false);
     };
 
-    const repairDivergence = () => {
-      transport.interrupt("revision-gap");
+    const beginHandshake = () => {
+      handshakeRef.current = true;
       if (transport.role === "host") {
         // The host is authoritative: push its snapshot for the guest to restore.
         sendSnapshot(newId("resync"));
@@ -223,6 +249,23 @@ export function useMatch({
           requestId: newId("resync"),
         });
       }
+    };
+    beginHandshakeRef.current = beginHandshake;
+
+    const repairDivergence = () => {
+      transport.interrupt("revision-gap");
+      beginHandshake();
+    };
+
+    /** Answer the peer's handshake: pause (if still ready) and mark it under way. */
+    const joinHandshake = () => {
+      transport.interrupt("revision-gap");
+      handshakeRef.current = true;
+    };
+
+    const resume = () => {
+      handshakeRef.current = false;
+      transport.resume();
     };
 
     const opponentColor = colorFor(transport.role === "host" ? "guest" : "host");
@@ -264,8 +307,10 @@ export function useMatch({
           return;
         }
         case "snapshot-request": {
-          if (transport.role !== "host") return;
-          transport.interrupt("revision-gap");
+          // While the guest's session is still missing the host could not resume on
+          // its acknowledgement; it pushes its own snapshot once resynchronizing.
+          if (transport.role !== "host" || transport.status === "interrupted") return;
+          joinHandshake();
           sendSnapshot(msg.requestId);
           return;
         }
@@ -277,29 +322,37 @@ export function useMatch({
             transport.fail("The host's Match Snapshot could not be read.");
             return;
           }
-          transport.interrupt("revision-gap");
-          restoreSnapshot(snapshot);
-          transport
-            .send({
+          // Waiting for the host's session: this peer could not resume, so it must
+          // not acknowledge; it requests a snapshot once resynchronizing.
+          if (transport.status === "interrupted") return;
+          const acknowledge = () =>
+            transport.send({
               protocolVersion: PROTOCOL_VERSION,
               type: "snapshot-applied",
               requestId: msg.requestId,
               revision: snapshot.revision,
-            })
-            .then(
-              () => transport.resume(),
+            });
+          if (transport.status === "ready" && matchContent(snapshot) === matchContent(createSnapshot())) {
+            // A duplicate of the Match already restored: acknowledge, never pause again.
+            void acknowledge();
+            return;
+          }
+          joinHandshake();
+          restoreSnapshot(snapshot);
+          acknowledge().then(
+              () => resume(),
               () => transport.fail("Could not acknowledge the host's Match Snapshot."),
             );
           return;
         }
         case "snapshot-applied": {
-          if (transport.role !== "host" || msg.requestId !== pendingSnapshotRef.current) return;
-          pendingSnapshotRef.current = null;
+          if (transport.role !== "host" || !pendingSnapshotIdsRef.current.has(msg.requestId)) return;
+          pendingSnapshotIdsRef.current.clear();
           if (msg.revision !== revisionRef.current) {
             transport.fail("The guest acknowledged a different Match revision.");
             return;
           }
-          transport.resume();
+          resume();
           return;
         }
         default:
@@ -307,6 +360,20 @@ export function useMatch({
       }
     });
   }, [transport, startMatch, clearWinnerOverlay]);
+
+  // Online: when the Room has both sessions back after an interruption, start the
+  // snapshot handshake unless one is already under way for this resynchronization.
+  const transportStatus = transport?.status;
+  useEffect(() => {
+    // Read the live status: a handshake may have started since this render.
+    if (transport?.status !== "resynchronizing") {
+      // Ready, or waiting for a session: any earlier handshake is over.
+      handshakeRef.current = false;
+      if (transport?.status === "interrupted") pendingSnapshotIdsRef.current.clear();
+      return;
+    }
+    if (!handshakeRef.current) beginHandshakeRef.current?.();
+  }, [transport, transportStatus]);
 
   // Pause the game clock during the countdown and while an online Match is paused
   useEffect(() => {

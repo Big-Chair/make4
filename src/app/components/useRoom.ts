@@ -2,10 +2,10 @@
  * useRoom — the owning Room Module.
  *
  * One module owns create/join orchestration, subscription state, Presence-derived
- * liveness, participant projection, Player Token synchronization, cleanup, and
- * readiness. Render Modules consume the discriminated `RoomState`; the Match
- * consumes only `matchTransport`, a narrow Adapter whose identity is stable for
- * one Room generation.
+ * liveness, participant projection, Player Token synchronization, interruption,
+ * cleanup, and readiness. Render Modules consume the discriminated `RoomState`;
+ * the Match consumes only `matchTransport`, a narrow Adapter whose identity is
+ * stable for one Room generation.
  *
  * The rule this module exists to enforce — a **Ready Room** exists only when:
  *  1. the persisted Room is `playing`;
@@ -15,17 +15,24 @@
  *  5. Presence confirms both host and guest liveness.
  *
  * Readiness is emitted once per Room generation: duplicate Presence syncs cannot
- * emit it twice, and a later Presence flicker cannot un-ready a live Room.
+ * emit it twice. At that moment both participant sessions (Presence client
+ * identities) are latched for the generation.
  *
  * Player Tokens are cosmetic: they never gate readiness, fall back to the Role's
  * colour default when absent, and reconcile from Presence and Broadcast whenever
  * they arrive or change.
  *
- * When the Match reports a possible Board divergence, the Room becomes
- * **interrupted**: the transport stops being `ready` (pausing Match input and its
- * timer) until the Match resumes it after snapshot acknowledgement, or the
- * resynchronization deadline fails the Room. The Room owns that timing; it never
- * interprets Board contents.
+ * A Ready Room becomes **interrupted** — the transport stops being `ready`,
+ * pausing Match input and its timer — when the local channel is lost, when a
+ * participant's Presence disappears, or when the Match reports a possible Board
+ * divergence. Each interruption starts one 20-second deadline. Once both latched
+ * sessions are live again the transport is `resynchronizing` until the Match
+ * resumes it after snapshot acknowledgement. A different session identity for
+ * either Role, or the deadline, fails the Room: the Match ends as no contest.
+ * The Room owns that timing; it never interprets Board contents.
+ *
+ * Full-page reload recovery is refused: the active Room code is remembered for
+ * the page session, and a Room Module that finds one on mount starts `failed`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -34,13 +41,13 @@ import {
   decodeMatchWireMessage,
   decodeRoomPresence,
   projectReadyRoom,
+  type InterruptReason,
   type MatchWireMessage,
   type OnlineMatchTransport,
   type ReadyRoom,
   type Role,
   type RoomAdapter,
   type RoomChannel,
-  type InterruptReason,
   type RoomFailure,
   type RoomPresence,
   type RoomRecord,
@@ -50,8 +57,8 @@ import { supabaseRoomAdapter } from "./roomSupabaseAdapter";
 import { defaultTokenFor, type TokenConfig } from "./tokens";
 
 const POLL_INTERVAL_MS = 2000;
-/** How long an interrupted Room may take to resynchronize before it fails. */
-export const RESYNC_DEADLINE_MS = 20_000;
+/** How long an interrupted Room may take to reconnect and resynchronize before it fails. */
+export const RECONNECT_DEADLINE_MS = 20_000;
 
 type TransportStatus = OnlineMatchTransport["status"];
 
@@ -62,6 +69,12 @@ export interface UseRoomReturn {
   join(input: { code: string; guestName: string; token: TokenConfig }): Promise<void>;
   updateLocalToken(token: TokenConfig): void;
   leave(): Promise<void>;
+}
+
+interface Interruption {
+  reason: InterruptReason;
+  reconnectDeadline: number;
+  resynchronizing: boolean;
 }
 
 interface RoomInternal {
@@ -76,7 +89,7 @@ interface RoomInternal {
   failure: RoomFailure | null;
   /** Latched on the first Ready Room of a generation; readiness is emitted once. */
   ready: boolean;
-  interruption: { reason: InterruptReason; deadline: number } | null;
+  interruption: Interruption | null;
 }
 
 const IDLE: RoomInternal = {
@@ -92,8 +105,40 @@ const IDLE: RoomInternal = {
   interruption: null,
 };
 
+/** Liveness as last reported by the channel, readable synchronously from callbacks. */
+interface Liveness {
+  subscribed: boolean;
+  /** Presence client identities currently live, per Role. */
+  sessions: { host: string[]; guest: string[] };
+}
+
+const NO_LIVENESS: Liveness = { subscribed: false, sessions: { host: [], guest: [] } };
+
+function reloadRefusal(code: string): RoomFailure {
+  return {
+    kind: "resync-failed",
+    message: `Online Matches can't be resumed after a page reload, so your Match in room ${code} can't continue.`,
+  };
+}
+
+function timeoutFailure(interruption: Interruption): RoomFailure {
+  if (interruption.resynchronizing) {
+    return { kind: "resync-failed", message: "The Match could not be resynchronized in time. It ended as no contest." };
+  }
+  return {
+    kind: "peer-timeout",
+    message:
+      interruption.reason === "channel-lost"
+        ? "Couldn't reconnect to the room in time. The Match ended as no contest."
+        : "Your opponent didn't reconnect in time. The Match ended as no contest.",
+  };
+}
+
 export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomReturn {
-  const [internal, setInternal] = useState<RoomInternal>(IDLE);
+  const [internal, setInternal] = useState<RoomInternal>(() => {
+    const rememberedRoomCode = adapter.recallActiveRoom();
+    return rememberedRoomCode ? { ...IDLE, failure: reloadRefusal(rememberedRoomCode) } : IDLE;
+  });
 
   const channelRef = useRef<RoomChannel | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -102,10 +147,18 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
   /** Bumped per Room generation; async work from an older generation is dropped. */
   const generationRef = useRef(0);
   const mountedRef = useRef(true);
+  /** Generated once for this Room Module's lifetime. */
+  const clientIdRef = useRef<string | null>(null);
+  if (clientIdRef.current === null) clientIdRef.current = adapter.createClientId();
+  const clientId = clientIdRef.current;
   /** Latest local token, readable from callbacks without re-creating them. */
   const localTokenRef = useRef<TokenConfig>(IDLE.localToken);
   const roleRef = useRef<Role | null>(null);
   const lastReadyRoomRef = useRef<ReadyRoom | null>(null);
+  const livenessRef = useRef<Liveness>(NO_LIVENESS);
+  /** The participant sessions latched at readiness; null until the Room is ready. */
+  const latchedSessionsRef = useRef<{ host: string; guest: string } | null>(null);
+  const interruptionRef = useRef<Interruption | null>(null);
   /** Read live by the transport's `status` getter. */
   const statusRef = useRef<TransportStatus>("ready");
   const deadlineRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -126,13 +179,17 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
     }
     clearDeadline();
     statusRef.current = "ready";
+    interruptionRef.current = null;
+    livenessRef.current = NO_LIVENESS;
+    latchedSessionsRef.current = null;
     const channel = channelRef.current;
     channelRef.current = null;
     transportRef.current = null;
     handlersRef.current.clear();
     roleRef.current = null;
+    adapter.rememberActiveRoom(null);
     return channel ? channel.close() : Promise.resolve();
-  }, [clearDeadline]);
+  }, [adapter, clearDeadline]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -141,6 +198,12 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
       void releaseGeneration();
     };
   }, [releaseGeneration]);
+
+  // A Room remembered from before a reload has been refused (see the initial
+  // state); forget it so the refusal is shown once.
+  useEffect(() => {
+    if (adapter.recallActiveRoom() && !channelRef.current) adapter.rememberActiveRoom(null);
+  }, [adapter]);
 
   const update = useCallback((generation: number, patch: Partial<RoomInternal>) => {
     if (!mountedRef.current || generationRef.current !== generation) return;
@@ -159,16 +222,80 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
     [releaseGeneration],
   );
 
+  // ── Interruption: one deadline per interruption, whatever happens inside it ──
+
+  const setInterruption = useCallback(
+    (generation: number, interruption: Interruption | null) => {
+      interruptionRef.current = interruption;
+      statusRef.current = !interruption ? "ready" : interruption.resynchronizing ? "resynchronizing" : "interrupted";
+      update(generation, { interruption });
+    },
+    [update],
+  );
+
+  const interruptRoom = useCallback(
+    (generation: number, reason: InterruptReason, resynchronizing: boolean) => {
+      const reconnectDeadline = Date.now() + RECONNECT_DEADLINE_MS;
+      clearDeadline();
+      deadlineRef.current = setTimeout(() => {
+        deadlineRef.current = null;
+        const interruption = interruptionRef.current;
+        if (interruption) fail(generation, timeoutFailure(interruption));
+      }, RECONNECT_DEADLINE_MS);
+      setInterruption(generation, { reason, reconnectDeadline, resynchronizing });
+    },
+    [clearDeadline, fail, setInterruption],
+  );
+
+  const bothSessionsLive = () => {
+    const { subscribed, sessions } = livenessRef.current;
+    return subscribed && sessions.host.length > 0 && sessions.guest.length > 0;
+  };
+
+  /** Move a Ready Room between ready, interrupted, and resynchronizing as liveness changes. */
+  const reconcileLiveness = useCallback(
+    (generation: number) => {
+      if (generationRef.current !== generation || !latchedSessionsRef.current) return;
+
+      // Only the latched sessions may come back. A reload or any other client
+      // claiming a Role would start from divergent local state: refuse it.
+      const latched = latchedSessionsRef.current;
+      const { sessions } = livenessRef.current;
+      if (
+        sessions.host.some((id) => id !== latched.host) ||
+        sessions.guest.some((id) => id !== latched.guest)
+      ) {
+        fail(generation, {
+          kind: "resync-failed",
+          message: "A player rejoined from a different browser session, so the Match can't be recovered. It ended as no contest.",
+        });
+        return;
+      }
+
+      const live = bothSessionsLive();
+      const lostReason: InterruptReason = livenessRef.current.subscribed ? "peer-left" : "channel-lost";
+      const interruption = interruptionRef.current;
+      if (!interruption) {
+        if (!live) interruptRoom(generation, lostReason, false);
+      } else if (live && !interruption.resynchronizing) {
+        setInterruption(generation, { ...interruption, resynchronizing: true });
+      } else if (!live && interruption.resynchronizing) {
+        setInterruption(generation, { ...interruption, reason: lostReason, resynchronizing: false });
+      }
+    },
+    [fail, interruptRoom, setInterruption],
+  );
+
   // ── Presence payload for this client ──
   const presencePayload = useCallback(
     (role: Role): RoomPresence => ({
       protocolVersion: PROTOCOL_VERSION,
-      clientId: adapter.clientId(),
+      clientId,
       role,
       token: localTokenRef.current,
       onlineAt: new Date().toISOString(),
     }),
-    [adapter],
+    [clientId],
   );
 
   // ── Open the Realtime channel for a generation ──
@@ -178,24 +305,34 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
 
       const channel = adapter.openChannel({
         code,
+        clientId,
         onStatus: (status, detail) => {
           if (generationRef.current !== generation) return;
           if (status === "subscribed") {
             // track() only after SUBSCRIBED — Presence before subscription is a lie.
+            // Re-subscription after a lost channel re-tracks the same identity.
             void channel.track(presencePayload(role));
+            livenessRef.current = { ...livenessRef.current, subscribed: true };
             update(generation, { subscribed: true });
-          } else if (status === "error") {
+            reconcileLiveness(generation);
+            return;
+          }
+          if (status === "error" && !latchedSessionsRef.current) {
             fail(generation, {
               kind: "subscription-failed",
               message: detail || "Lost the room connection. Please try again.",
             });
-          } else if (status === "closed") {
-            update(generation, { subscribed: false });
+            return;
           }
+          // A Ready Room survives a lost channel as an interruption. Presence from
+          // before the loss proves nothing: liveness waits for a fresh sync.
+          livenessRef.current = NO_LIVENESS;
+          update(generation, { subscribed: false, presentRoles: { host: false, guest: false } });
+          reconcileLiveness(generation);
         },
         onPresence: (states) => {
           if (generationRef.current !== generation) return;
-          const presentRoles = { host: false, guest: false };
+          const sessions: Liveness["sessions"] = { host: [], guest: [] };
           let peerToken: TokenConfig | null = null;
           for (const raw of states) {
             const decoded = decodeRoomPresence(raw);
@@ -203,19 +340,23 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
               console.warn("[Room] Ignoring malformed presence payload:", raw);
               continue;
             }
-            presentRoles[decoded.role] = true;
+            if (!sessions[decoded.role].includes(decoded.clientId)) {
+              sessions[decoded.role].push(decoded.clientId);
+            }
             // Presence carries the peer's latest token for reconciliation after
             // subscription or reconnect. It never overrides persisted identity.
             if (decoded.role !== role && decoded.token) peerToken = decoded.token;
           }
+          livenessRef.current = { ...livenessRef.current, sessions };
           setInternal((prev) => {
             if (generationRef.current !== generation) return prev;
             return {
               ...prev,
-              presentRoles,
+              presentRoles: { host: sessions.host.length > 0, guest: sessions.guest.length > 0 },
               peerToken: peerToken ?? prev.peerToken,
             };
           });
+          reconcileLiveness(generation);
         },
         onMessage: (payload) => {
           if (generationRef.current !== generation) return;
@@ -254,31 +395,21 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
         },
         interrupt: (reason) => {
           if (!current() || statusRef.current !== "ready") return;
-          // Both peers are still live, so resynchronization starts at once.
-          statusRef.current = "resynchronizing";
-          const deadline = Date.now() + RESYNC_DEADLINE_MS;
-          clearDeadline();
-          deadlineRef.current = setTimeout(() => {
-            deadlineRef.current = null;
-            fail(generation, {
-              kind: "resync-failed",
-              message: "The Match could not be resynchronized in time.",
-            });
-          }, RESYNC_DEADLINE_MS);
-          update(generation, { interruption: { reason, deadline } });
+          // With both sessions live, resynchronization starts at once.
+          interruptRoom(generation, reason, bothSessionsLive());
         },
         resume: () => {
-          if (!current() || statusRef.current === "ready") return;
+          if (!current() || statusRef.current !== "resynchronizing") return;
+          // Completing recovery clears the deadline.
           clearDeadline();
-          statusRef.current = "ready";
-          update(generation, { interruption: null });
+          setInterruption(generation, null);
         },
         fail: (message) => {
           fail(generation, { kind: "resync-failed", message });
         },
       };
     },
-    [adapter, clearDeadline, fail, presencePayload, update],
+    [adapter, clearDeadline, clientId, fail, interruptRoom, presencePayload, reconcileLiveness, setInterruption, update],
   );
 
   // ── Host polling: the persisted-state fallback for a guest join ──
@@ -378,22 +509,19 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
     [adapter, fail, openChannel, releaseGeneration, update],
   );
 
-  const updateLocalToken = useCallback((token: TokenConfig) => {
-    localTokenRef.current = token;
-    setInternal((prev) => ({ ...prev, localToken: token }));
-    const role = roleRef.current;
-    const channel = channelRef.current;
-    if (!channel || !role) return;
-    // Presence for reconciliation, Broadcast for immediate peer rendering.
-    void channel.track({
-      protocolVersion: PROTOCOL_VERSION,
-      clientId: adapter.clientId(),
-      role,
-      token,
-      onlineAt: new Date().toISOString(),
-    });
-    void channel.send({ protocolVersion: PROTOCOL_VERSION, type: "token-sync", token });
-  }, [adapter]);
+  const updateLocalToken = useCallback(
+    (token: TokenConfig) => {
+      localTokenRef.current = token;
+      setInternal((prev) => ({ ...prev, localToken: token }));
+      const role = roleRef.current;
+      const channel = channelRef.current;
+      if (!channel || !role) return;
+      // Presence for reconciliation, Broadcast for immediate peer rendering.
+      void channel.track(presencePayload(role));
+      void channel.send({ protocolVersion: PROTOCOL_VERSION, type: "token-sync", token });
+    },
+    [presencePayload],
+  );
 
   const leave = useCallback(async () => {
     const closed = releaseGeneration();
@@ -414,15 +542,19 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
   const readyNow = persistedReady && internal.subscribed && bothLive;
   const isReady = internal.ready || readyNow;
 
-  // Latch readiness once per generation and stop the join poll.
+  // Latch readiness once per generation: stop the join poll, latch both
+  // participant sessions, and remember the Room so a reload can be refused.
   useEffect(() => {
-    if (!readyNow || internal.ready) return;
+    if (!readyNow || internal.ready || !internal.record) return;
     if (pollingRef.current) {
       clearInterval(pollingRef.current);
       pollingRef.current = null;
     }
+    const { sessions } = livenessRef.current;
+    latchedSessionsRef.current = { host: sessions.host[0], guest: sessions.guest[0] };
+    adapter.rememberActiveRoom(internal.record.code);
     setInternal((prev) => (prev.ready ? prev : { ...prev, ready: true }));
-  }, [readyNow, internal.ready]);
+  }, [adapter, readyNow, internal.ready, internal.record]);
 
   const state = useMemo<RoomState>(() => {
     if (internal.failure) {
@@ -449,7 +581,8 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
           phase: "interrupted",
           room,
           reason: internal.interruption.reason,
-          reconnectDeadline: internal.interruption.deadline,
+          reconnectDeadline: internal.interruption.reconnectDeadline,
+          resynchronizing: internal.interruption.resynchronizing,
         };
       }
       return { phase: "ready", room };
