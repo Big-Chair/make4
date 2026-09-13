@@ -13,6 +13,7 @@ import { LeaderboardDrawer } from "./LeaderboardDrawer";
 import { TokenCustomizer } from "./TokenCustomizer";
 import { type TokenConfig, DEFAULT_PALETTE } from "./tokens";
 import type { OnlineMatchTransport } from "./room";
+import { RoomStatusOverlay, type RoomNotice } from "./RoomStatusOverlay";
 import { useMatch } from "./useMatch";
 import { setSfxVolume } from "./useSoundEffects";
 import { useIsMobile } from "./useIsMobile";
@@ -51,11 +52,13 @@ interface GameScreenProps {
   p2Token?: TokenConfig;
   /** The Room's Match seam when this Match is online. */
   transport?: OnlineMatchTransport;
+  /** Why an online Match is paused or has ended as no contest; null while ready. */
+  roomNotice?: RoomNotice | null;
   onP1TokenChange?: (config: TokenConfig) => void;
   onP2TokenChange?: (config: TokenConfig) => void;
 }
 
-export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, player1Name, player2Name, spotifyToken, timerDuration, soundEnabled, onSoundToggle, onDifficultyChange, p1Token, p2Token, transport, onP1TokenChange, onP2TokenChange }: GameScreenProps) {
+export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, player1Name, player2Name, spotifyToken, timerDuration, soundEnabled, onSoundToggle, onDifficultyChange, p1Token, p2Token, transport, roomNotice = null, onP1TokenChange, onP2TokenChange }: GameScreenProps) {
   const isMobile = useIsMobile();
 
   // The deep move pipeline: board state, turn legality, AI, online sync, countdown,
@@ -544,6 +547,9 @@ export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, pla
         difficulty={difficulty}
         onDifficultyChange={onDifficultyChange}
       />
+
+      {/* Online Room interruption / no contest — above everything, input is paused */}
+      <RoomStatusOverlay notice={roomNotice} onExit={onExit} />
 
       {/* Spotify Player — hidden on mobile for performance */}
       {!isMobile && (

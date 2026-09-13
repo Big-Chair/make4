@@ -33,19 +33,17 @@ function toApiResult<T>(res: Result<T>): RoomApiResult<T> {
   return { ok: false, error: { status: res.error.status, message: res.error.message } };
 }
 
-/** Stable for the lifetime of this browser session — the identity a same-session
- *  reconnect is recognized by. */
-let sessionClientId: string | null = null;
-
-function ensureClientId(): string {
-  if (sessionClientId) return sessionClientId;
+/** A fresh identity. A page reload builds a new Room Module and so a new one,
+ *  which is how reload recovery is told apart from same-session reconnect. */
+function createClientId(): string {
   const globalCrypto = typeof crypto !== "undefined" ? crypto : undefined;
-  sessionClientId =
-    globalCrypto && "randomUUID" in globalCrypto
-      ? globalCrypto.randomUUID()
-      : `client-${Math.random().toString(36).slice(2)}-${Date.now()}`;
-  return sessionClientId;
+  return globalCrypto && "randomUUID" in globalCrypto
+    ? globalCrypto.randomUUID()
+    : `client-${Math.random().toString(36).slice(2)}-${Date.now()}`;
 }
+
+/** Page-session storage survives a reload of this tab, and nothing else. */
+const ACTIVE_ROOM_KEY = "make4_active_room";
 
 export const supabaseRoomAdapter: RoomAdapter = {
   async createRoom({ hostName, timerDuration, blastTokens = true }) {
@@ -60,9 +58,9 @@ export const supabaseRoomAdapter: RoomAdapter = {
     return toApiResult<RoomRecord>(await fetchRoom(code));
   },
 
-  openChannel({ code, onStatus, onPresence, onMessage }: OpenChannelInput): RoomChannel {
+  openChannel({ code, clientId, onStatus, onPresence, onMessage }: OpenChannelInput): RoomChannel {
     const channel: RealtimeChannel = supabase.channel(channelName(code), {
-      config: { broadcast: { self: false }, presence: { key: ensureClientId() } },
+      config: { broadcast: { self: false }, presence: { key: clientId } },
     });
 
     let closed = false;
@@ -77,6 +75,8 @@ export const supabaseRoomAdapter: RoomAdapter = {
         const state = channel.presenceState<Record<string, unknown>>();
         onPresence(Object.values(state).flat());
       })
+      // Realtime rejoins on its own after CHANNEL_ERROR / TIMED_OUT and reports
+      // SUBSCRIBED again, which the Room Module treats as a reconnect.
       .subscribe((status, err) => {
         if (closed) return;
         if (status === "SUBSCRIBED") onStatus("subscribed");
@@ -108,5 +108,22 @@ export const supabaseRoomAdapter: RoomAdapter = {
     };
   },
 
-  clientId: ensureClientId,
+  createClientId,
+
+  recallActiveRoom() {
+    try {
+      return sessionStorage.getItem(ACTIVE_ROOM_KEY);
+    } catch {
+      return null;
+    }
+  },
+
+  rememberActiveRoom(code) {
+    try {
+      if (code) sessionStorage.setItem(ACTIVE_ROOM_KEY, code);
+      else sessionStorage.removeItem(ACTIVE_ROOM_KEY);
+    } catch {
+      /* storage unavailable: reload refusal degrades to a peer timeout */
+    }
+  },
 };

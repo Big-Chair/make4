@@ -51,6 +51,9 @@ class FakeChannel implements RoomChannel {
   errored(detail = "channel error") {
     this.input.onStatus("error", detail);
   }
+  closed() {
+    this.input.onStatus("closed");
+  }
   presence(states: unknown[]) {
     this.input.onPresence(states);
   }
@@ -83,6 +86,9 @@ function createFakeAdapter() {
     fetchCalls: 0,
     joinedCodes: [] as string[],
     channels: [] as FakeChannel[],
+    clientIdsCreated: 0,
+    /** What a page-session store would still hold across a reload. */
+    activeRoom: null as string | null,
   };
 
   const adapter: RoomAdapter = {
@@ -102,7 +108,14 @@ function createFakeAdapter() {
       state.channels.push(channel);
       return channel;
     },
-    clientId: () => "client-under-test",
+    createClientId: () => {
+      state.clientIdsCreated++;
+      return `client-under-test-${state.clientIdsCreated}`;
+    },
+    recallActiveRoom: () => state.activeRoom,
+    rememberActiveRoom: (code) => {
+      state.activeRoom = code;
+    },
   };
 
   return { adapter, state, channel: () => state.channels[state.channels.length - 1] };
@@ -111,10 +124,13 @@ function createFakeAdapter() {
 const RED: TokenConfig = { type: "gradient", gradient: "red-gradient" };
 const BLUE: TokenConfig = { type: "gradient", gradient: "blue-gradient" };
 
-function presence(role: "host" | "guest", token: TokenConfig = { type: "default" }): RoomPresence {
+function presence(
+  role: "host" | "guest",
+  { token = { type: "default" }, clientId = `client-${role}` }: { token?: TokenConfig; clientId?: string } = {},
+): RoomPresence {
   return {
     protocolVersion: PROTOCOL_VERSION,
-    clientId: `client-${role}`,
+    clientId,
     role,
     token,
     onlineAt: "2026-01-01T00:00:00.000Z",
@@ -179,10 +195,10 @@ describe("readiness gating", () => {
     expect(result.current.state.phase).toBe("synchronizing");
     expect(result.current.matchTransport).toBeNull();
 
-    act(() => channel().presence([presence("host", RED)]));
+    act(() => channel().presence([presence("host", { token: RED })]));
     expect(result.current.state.phase).toBe("synchronizing");
 
-    act(() => channel().presence([presence("host", RED), presence("guest", BLUE)]));
+    act(() => channel().presence([presence("host", { token: RED }), presence("guest", { token: BLUE })]));
     expect(result.current.state.phase).toBe("ready");
   });
 
@@ -193,7 +209,7 @@ describe("readiness gating", () => {
     expect(result.current.state.phase).toBe("synchronizing");
 
     // Even with both peers live in Presence, an unsubscribed channel is not ready.
-    act(() => channel().presence([presence("host", RED), presence("guest", BLUE)]));
+    act(() => channel().presence([presence("host", { token: RED }), presence("guest", { token: BLUE })]));
     expect(result.current.state.phase).toBe("synchronizing");
     expect(result.current.matchTransport).toBeNull();
 
@@ -270,8 +286,6 @@ describe("ordering and exactly-once readiness", () => {
 
     act(() => channel().presence(both));
     act(() => channel().presence(both));
-    // A Presence flicker cannot un-ready a live Room either.
-    act(() => channel().presence([presence("host")]));
 
     expect(result.current.state.phase).toBe("ready");
     expect(readyTransitions(phases)).toBe(1);
@@ -310,7 +324,7 @@ describe("player tokens", () => {
     act(() =>
       channel().presence([
         { protocolVersion: 1, clientId: "c", role: "host", onlineAt: "now" },
-        presence("guest", BLUE),
+        presence("guest", { token: BLUE }),
       ]),
     );
 
@@ -327,7 +341,7 @@ describe("player tokens", () => {
     const { result } = await guestRoom(adapter);
 
     act(() => channel().subscribed());
-    act(() => channel().presence([presence("host"), presence("guest", BLUE)]));
+    act(() => channel().presence([presence("host"), presence("guest", { token: BLUE })]));
     expect(result.current.state.phase).toBe("ready");
 
     act(() =>
@@ -345,10 +359,10 @@ describe("player tokens", () => {
     const { result } = await guestRoom(adapter);
 
     act(() => channel().subscribed());
-    act(() => channel().presence([presence("host"), presence("guest", BLUE)]));
+    act(() => channel().presence([presence("host"), presence("guest", { token: BLUE })]));
 
     const updatedHostToken: TokenConfig = { type: "emoji", emoji: "🔥" };
-    act(() => channel().presence([presence("host", updatedHostToken), presence("guest", BLUE)]));
+    act(() => channel().presence([presence("host", { token: updatedHostToken }), presence("guest", { token: BLUE })]));
 
     const room = result.current.state.phase === "ready" ? result.current.state.room : null;
     expect(room?.participants.red.token).toEqual(updatedHostToken);
@@ -359,7 +373,7 @@ describe("player tokens", () => {
     const { result } = await guestRoom(adapter);
 
     act(() => channel().subscribed());
-    act(() => channel().presence([presence("host"), presence("guest", BLUE)]));
+    act(() => channel().presence([presence("host"), presence("guest", { token: BLUE })]));
 
     const received: MatchWireMessage[] = [];
     act(() => {
@@ -447,11 +461,11 @@ describe("failures", () => {
     act(() => channel().subscribed());
     // Wrong protocol version, unknown type, and junk — none of it reaches state.
     act(() =>
-      channel().presence([{ protocolVersion: 99, role: "host" }, "nonsense", presence("guest", BLUE)]),
+      channel().presence([{ protocolVersion: 99, role: "host" }, "nonsense", presence("guest", { token: BLUE })]),
     );
     expect(result.current.state.phase).toBe("synchronizing");
 
-    act(() => channel().presence([presence("host"), presence("guest", BLUE)]));
+    act(() => channel().presence([presence("host"), presence("guest", { token: BLUE })]));
     const received: MatchWireMessage[] = [];
     act(() => {
       result.current.matchTransport?.subscribe((message) => received.push(message));
@@ -535,5 +549,221 @@ describe("cleanup", () => {
     expect(first.closeCount).toBe(1);
     expect(state.channels).toHaveLength(2);
     expect(channel()).not.toBe(first);
+  });
+});
+
+// ─── 10.–14. Interruption, same-session reconnect, and no contest ───
+
+/** A guest Room that is Ready, with both participant sessions latched. */
+async function readyGuest(adapter: RoomAdapter, channel: () => FakeChannel) {
+  const view = await guestRoom(adapter);
+  act(() => channel().subscribed());
+  act(() => channel().presence([presence("host", { token: RED }), presence("guest", { token: BLUE })]));
+  expect(view.result.current.state.phase).toBe("ready");
+  return view;
+}
+
+const interruption = (state: RoomState) => (state.phase === "interrupted" ? state : null);
+
+describe("interruption and reconnect", () => {
+  it("interrupts a Ready Room when peer Presence disappears", async () => {
+    const { adapter, channel } = createFakeAdapter();
+    const { result } = await readyGuest(adapter, channel);
+    const transport = result.current.matchTransport;
+
+    act(() => channel().presence([presence("guest", { token: BLUE })]));
+
+    expect(interruption(result.current.state)).toMatchObject({
+      reason: "peer-left",
+      resynchronizing: false,
+      reconnectDeadline: Date.now() + 20_000,
+    });
+    // The Match keeps the same seam and sees the pause immediately.
+    expect(result.current.matchTransport).toBe(transport);
+    expect(transport?.status).toBe("interrupted");
+  });
+
+  it("interrupts rather than fails when the local channel is lost after readiness", async () => {
+    const { adapter, channel } = createFakeAdapter();
+    const { result } = await readyGuest(adapter, channel);
+
+    act(() => channel().errored("socket dropped"));
+
+    expect(interruption(result.current.state)?.reason).toBe("channel-lost");
+    expect(result.current.matchTransport?.status).toBe("interrupted");
+    expect(channel().closeCount).toBe(0);
+  });
+
+  it("re-tracks Presence and resynchronizes when the channel comes back", async () => {
+    const { adapter, channel } = createFakeAdapter();
+    const { result } = await readyGuest(adapter, channel);
+    act(() => channel().closed());
+    expect(interruption(result.current.state)?.reason).toBe("channel-lost");
+
+    act(() => channel().subscribed());
+    expect(channel().tracked).toHaveLength(2);
+    expect(channel().tracked[1].clientId).toBe(channel().tracked[0].clientId);
+    // Presence from before the loss proves nothing: wait for a fresh sync.
+    expect(result.current.matchTransport?.status).toBe("interrupted");
+    // Subscribed again, but Presence has not yet proven both sessions live.
+    act(() => channel().presence([presence("guest", { token: BLUE })]));
+    expect(result.current.matchTransport?.status).toBe("interrupted");
+
+    act(() => channel().presence([presence("host", { token: RED }), presence("guest", { token: BLUE })]));
+    expect(interruption(result.current.state)?.resynchronizing).toBe(true);
+    expect(result.current.matchTransport?.status).toBe("resynchronizing");
+  });
+
+  it("returns to ready only when the Match acknowledges resynchronization", async () => {
+    const { adapter, channel } = createFakeAdapter();
+    const { result, phases } = await readyGuest(adapter, channel);
+
+    act(() => channel().presence([presence("guest", { token: BLUE })]));
+    // Resuming while the peer is still gone does nothing.
+    act(() => result.current.matchTransport?.resume());
+    expect(result.current.matchTransport?.status).toBe("interrupted");
+
+    act(() => channel().presence([presence("host", { token: RED }), presence("guest", { token: BLUE })]));
+    expect(result.current.state.phase).toBe("interrupted");
+
+    act(() => result.current.matchTransport?.resume());
+    expect(result.current.state.phase).toBe("ready");
+    expect(result.current.matchTransport?.status).toBe("ready");
+
+    // Recovery cleared the deadline: nothing fails later.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(result.current.state.phase).toBe("ready");
+    expect(phases.filter((phase) => phase === "failed")).toHaveLength(0);
+  });
+
+  it("ends as a peer timeout when the peer does not return within 20 seconds", async () => {
+    const { adapter, channel } = createFakeAdapter();
+    const { result } = await readyGuest(adapter, channel);
+
+    act(() => channel().presence([presence("guest", { token: BLUE })]));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(19_999);
+    });
+    expect(result.current.state.phase).toBe("interrupted");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    const { state } = result.current;
+    expect(state.phase).toBe("failed");
+    expect(state.phase === "failed" && state.error.kind).toBe("peer-timeout");
+    expect(state.phase === "failed" && state.previousRoom?.code).toBe("ABCD");
+    expect(result.current.matchTransport).toBeNull();
+    expect(channel().closeCount).toBe(1);
+  });
+
+  it("ends as a resynchronization failure when the peer returns but the handshake never completes", async () => {
+    const { adapter, channel } = createFakeAdapter();
+    const { result } = await readyGuest(adapter, channel);
+
+    act(() => channel().presence([presence("guest", { token: BLUE })]));
+    act(() => channel().presence([presence("host", { token: RED }), presence("guest", { token: BLUE })]));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+
+    const { state } = result.current;
+    expect(state.phase === "failed" && state.error.kind).toBe("resync-failed");
+  });
+
+  it("keeps one deadline for the whole interruption, however often the peer flickers", async () => {
+    const { adapter, channel } = createFakeAdapter();
+    const { result } = await readyGuest(adapter, channel);
+
+    act(() => channel().presence([presence("guest", { token: BLUE })]));
+    const deadline = interruption(result.current.state)?.reconnectDeadline;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    act(() => channel().presence([presence("host", { token: RED }), presence("guest", { token: BLUE })]));
+    act(() => channel().presence([presence("guest", { token: BLUE })]));
+    expect(interruption(result.current.state)?.reconnectDeadline).toBe(deadline);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(result.current.state.phase).toBe("failed");
+  });
+
+  it("refuses a peer that comes back as a different client session", async () => {
+    const { adapter, channel } = createFakeAdapter();
+    const { result } = await readyGuest(adapter, channel);
+
+    act(() => channel().presence([presence("guest", { token: BLUE })]));
+    // The host reloaded: same Role, new browser-session identity.
+    act(() => channel().presence([presence("host", { token: RED, clientId: "client-host-reloaded" }), presence("guest", { token: BLUE })]));
+
+    const { state } = result.current;
+    expect(state.phase).toBe("failed");
+    expect(state.phase === "failed" && state.error.kind).toBe("resync-failed");
+    expect(result.current.matchTransport).toBeNull();
+  });
+
+  it("generates one client identity for the Room Module lifetime", async () => {
+    const { adapter, state, channel } = createFakeAdapter();
+    const { result } = await hostRoom(adapter);
+    act(() => channel().subscribed());
+    const first = channel().tracked[0].clientId;
+
+    await act(async () => {
+      await result.current.create({ hostName: "Ana", timerDuration: 40, token: RED });
+    });
+    act(() => channel().subscribed());
+
+    expect(channel().tracked[0].clientId).toBe(first);
+    expect(channel().input.clientId).toBe(first);
+    expect(state.clientIdsCreated).toBe(1);
+  });
+
+  it("clears the reconnect deadline exactly once when leaving an interrupted Room", async () => {
+    const { adapter, channel } = createFakeAdapter();
+    const { result, phases } = await readyGuest(adapter, channel);
+    act(() => channel().presence([presence("guest", { token: BLUE })]));
+
+    await act(async () => {
+      await result.current.leave();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+
+    expect(channel().closeCount).toBe(1);
+    expect(result.current.state).toEqual({ phase: "idle" });
+    expect(phases.filter((phase) => phase === "failed")).toHaveLength(0);
+  });
+});
+
+describe("reload refusal", () => {
+  it("remembers the Ready Room for this page session and forgets it on leave", async () => {
+    const { adapter, state, channel } = createFakeAdapter();
+    const { result } = await readyGuest(adapter, channel);
+    expect(state.activeRoom).toBe("ABCD");
+
+    await act(async () => {
+      await result.current.leave();
+    });
+    expect(state.activeRoom).toBeNull();
+  });
+
+  it("refuses to recover a Room that was active before a full-page reload", () => {
+    const { adapter, state } = createFakeAdapter();
+    state.activeRoom = "ABCD";
+
+    const { result } = renderRoom(adapter);
+
+    const room = result.current.state;
+    expect(room.phase).toBe("failed");
+    expect(room.phase === "failed" && room.error.kind).toBe("resync-failed");
+    expect(room.phase === "failed" && room.error.message).toMatch(/reload/i);
+    expect(result.current.matchTransport).toBeNull();
+    expect(state.channels).toHaveLength(0);
+    expect(state.activeRoom).toBeNull();
   });
 });

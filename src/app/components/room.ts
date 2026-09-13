@@ -76,14 +76,18 @@ export type RoomState =
   | {
       phase: "interrupted";
       room: ReadyRoom;
-      /** Epoch ms by which resynchronization must complete, or the Room fails. */
+      /** Epoch ms by which reconnection and resynchronization must complete, or
+       *  the Room fails and the Match ends as no contest. One per interruption. */
       reconnectDeadline: number;
       reason: InterruptReason;
+      /** Both participant sessions are live again and the Match Snapshot
+       *  handshake is under way; false while still waiting for a session. */
+      resynchronizing: boolean;
     }
   | { phase: "failed"; error: RoomFailure; previousRoom?: ReadyRoom };
 
 /** Why a Ready Room stopped accepting Match input. */
-export type InterruptReason = "revision-gap";
+export type InterruptReason = "peer-left" | "channel-lost" | "revision-gap";
 
 // ─── Wire protocol ───
 
@@ -132,7 +136,8 @@ export interface OnlineMatchTransport {
   /** The Match saw its Board may have diverged: pause and start resynchronizing.
    *  The Room owns the deadline by which `resume` must follow. No-op unless ready. */
   interrupt(reason: InterruptReason): void;
-  /** This peer's snapshot acknowledgement completed: the Room is ready again. */
+  /** This peer's snapshot acknowledgement completed: the Room is ready again.
+   *  Ignored unless `resynchronizing` — a missing session cannot be resumed past. */
   resume(): void;
   /** Resynchronization cannot complete (e.g. an undecodable snapshot). */
   fail(message: string): void;
@@ -289,6 +294,8 @@ export interface RoomChannel {
 
 export interface OpenChannelInput {
   code: string;
+  /** This Room Module's client identity — also the channel's Presence key. */
+  clientId: string;
   onStatus: (status: ChannelStatus, detail?: string) => void;
   /** Raw Presence states for the whole channel — decoded by the Room Module. */
   onPresence: (states: unknown[]) => void;
@@ -316,6 +323,11 @@ export interface RoomAdapter {
   joinRoom(input: { code: string; guestName: string }): Promise<RoomApiResult<RoomRecord>>;
   fetchRoom(code: string): Promise<RoomApiResult<RoomRecord>>;
   openChannel(input: OpenChannelInput): RoomChannel;
-  /** Identity for this browser session; same-session reconnect is recognized by it. */
-  clientId(): string;
+  /** A fresh client identity. The Room Module asks once for its lifetime; only a
+   *  participant that returns with the same identity may reconnect. */
+  createClientId(): string;
+  /** The Room code that was active in this page session before a full reload, if any. */
+  recallActiveRoom(): string | null;
+  /** Remember (or, with `null`, forget) the active Room so a reload can be refused. */
+  rememberActiveRoom(code: string | null): void;
 }

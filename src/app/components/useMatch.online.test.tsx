@@ -29,10 +29,13 @@ class FakeNetwork {
   queue: Envelope[] = [];
   /** Messages matching this predicate are lost in transit. */
   lose: ((message: MatchWireMessage) => boolean) | null = null;
+  /** Channels cut off from the network: everything to or from them is lost. */
+  down = new Set<FakeChannel>();
 
   transmit(from: FakeChannel, message: MatchWireMessage) {
     const to = this.channels.find((channel) => channel !== from);
     if (!to) return;
+    if (this.down.has(from) || this.down.has(to)) return;
     if (this.lose?.(message)) return;
     // A JSON round trip, as the real wire would do.
     this.queue.push({ from, to, payload: JSON.parse(JSON.stringify(message)) });
@@ -83,10 +86,10 @@ const playingRecord: RoomRecord = {
   createdAt: "2026-01-01T00:00:00.000Z",
 };
 
-function presence(role: "host" | "guest"): RoomPresence {
+function presence(role: "host" | "guest", { clientId = `client-${role}` }: { clientId?: string } = {}): RoomPresence {
   return {
     protocolVersion: PROTOCOL_VERSION,
-    clientId: `client-${role}`,
+    clientId,
     role,
     token: { type: "default" },
     onlineAt: "2026-01-01T00:00:00.000Z",
@@ -110,7 +113,9 @@ function fakeAdapter(network: FakeNetwork, role: "host" | "guest") {
       channels.push(channel);
       return channel;
     },
-    clientId: () => `client-${role}`,
+    createClientId: () => `client-${role}`,
+    recallActiveRoom: () => null,
+    rememberActiveRoom: () => {},
   };
   return { adapter, channel: () => channels[channels.length - 1] };
 }
@@ -562,5 +567,220 @@ describe("rematch", () => {
       revision: 1,
     });
     expect(guest.room.state.phase).toBe("ready");
+  });
+});
+
+// ─── Peer interruption, same-session reconnect, and no contest ───
+
+/** What this peer's channel reports Presence to contain. */
+function sees(peer: Peer, roles: ("host" | "guest")[]) {
+  act(() => peer.channel().input.onPresence(roles.map((role) => presence(role))));
+}
+
+function channelStatus(peer: Peer, status: "subscribed" | "closed" | "error") {
+  act(() => peer.channel().input.onStatus(status));
+}
+
+describe("peer interruption and reconnect", () => {
+  it("pauses Match input and its timer the moment peer Presence disappears", async () => {
+    const { host, guest, flush } = await startReadyMatch({ timerDuration: 40 });
+    await elapse(2000);
+
+    sees(host, ["host"]);
+    expect(host.room.state.phase === "interrupted" && host.room.state.reason).toBe("peer-left");
+    expect(host.match.inputDisabled).toBe(true);
+    const timer = host.match.timer;
+
+    act(() => host.match.drop(3));
+    await flush();
+    await elapse(5000);
+
+    expect(sentActions(host)).toHaveLength(0);
+    expect(host.match.timer).toBe(timer);
+    // The peer that noticed nothing is unaffected until its own Room says so.
+    expect(guest.room.state.phase).toBe("ready");
+  });
+
+  it("reconnects through the host snapshot and resumes neither peer before acknowledgement", async () => {
+    const { network, host, guest, flush } = await startReadyMatch();
+    // The guest's network drops just as the host moves: the Drop never arrives.
+    network.down.add(guest.channel());
+    act(() => host.match.drop(3));
+    await flush();
+    channelStatus(guest, "error");
+    sees(host, ["host"]);
+    expect(guest.room.state.phase === "interrupted" && guest.room.state.reason).toBe("channel-lost");
+    expect(host.room.state.phase === "interrupted" && host.room.state.reason).toBe("peer-left");
+    expect(guest.match.board).not.toEqual(host.match.board);
+
+    // Same sessions come back. Hold the acknowledgement to prove nobody jumps the gun.
+    const held: MatchWireMessage[] = [];
+    network.lose = (message) => {
+      if (message.type !== "snapshot-applied") return false;
+      held.push(message);
+      return true;
+    };
+    network.down.clear();
+    channelStatus(guest, "subscribed");
+    sees(guest, ["host", "guest"]);
+    sees(host, ["host", "guest"]);
+    await flush();
+
+    expect(guest.match.board).toEqual(host.match.board);
+    expect(host.room.matchTransport?.status).toBe("resynchronizing");
+    expect(host.room.state.phase === "interrupted" && host.room.state.resynchronizing).toBe(true);
+    act(() => host.match.drop(1));
+    expect(sentActions(host)).toHaveLength(1);
+
+    network.lose = null;
+    for (const message of held) network.transmit(guest.channel(), message);
+    await flush();
+
+    expect(host.room.state.phase).toBe("ready");
+    expect(guest.room.state.phase).toBe("ready");
+    act(() => guest.match.drop(4));
+    await flush();
+    expect(sentActions(guest).at(-1)).toEqual({ protocolVersion: 1, type: "drop", revision: 2, col: 4 });
+    expect(host.match.board).toEqual(guest.match.board);
+
+    // Recovery cleared the deadline on both sides.
+    await elapse(20_000);
+    expect(host.room.state.phase).toBe("ready");
+    expect(guest.room.state.phase).toBe("ready");
+  });
+
+  it("host that lost its own channel pushes its snapshot to a guest that never noticed", async () => {
+    const { network, host, guest, flush } = await startReadyMatch();
+    act(() => host.match.drop(3));
+    await flush();
+
+    network.down.add(host.channel());
+    channelStatus(host, "closed");
+    // The guest still sees the host and moves; the host never receives it.
+    act(() => guest.match.drop(3));
+    await flush();
+    expect(guest.match.board).not.toEqual(host.match.board);
+
+    network.down.clear();
+    channelStatus(host, "subscribed");
+    sees(host, ["host", "guest"]);
+    await flush();
+
+    expect(guest.match.board).toEqual(host.match.board);
+    expect(guest.match.currentPlayer).toBe("yellow");
+    expect(host.room.state.phase).toBe("ready");
+    expect(guest.room.state.phase).toBe("ready");
+  });
+
+  it("runs a single handshake when both peers noticed the interruption", async () => {
+    const { network, host, guest, flush } = await startReadyMatch();
+    network.down.add(guest.channel());
+    act(() => host.match.drop(3));
+    await flush();
+    channelStatus(guest, "error");
+    sees(host, ["host"]);
+    const deadline = guest.room.state.phase === "interrupted" ? guest.room.state.reconnectDeadline : null;
+
+    network.down.clear();
+    channelStatus(guest, "subscribed");
+    // The guest asks first; the host pushes before it hears the request.
+    sees(guest, ["host", "guest"]);
+    sees(host, ["host", "guest"]);
+    // The transport's status is live, so it shows what the guest was doing at each send.
+    const guestTransport = guest.room.matchTransport;
+    const guestStatuses: string[] = [];
+    const transmit = network.transmit.bind(network);
+    network.transmit = (from, message) => {
+      guestStatuses.push(guestTransport?.status ?? "none");
+      transmit(from, message);
+    };
+    await flush();
+
+    // Both snapshots are acknowledged, but once the guest is ready again a duplicate
+    // never pauses it a second time or starts another deadline.
+    expect(deadline).not.toBeNull();
+    expect(sentOfType(guest, "snapshot-applied")).toHaveLength(2);
+    const readyAt = guestStatuses.indexOf("ready");
+    if (readyAt > -1) {
+      expect(guestStatuses.slice(readyAt).every((status) => status === "ready")).toBe(true);
+    }
+    expect(guest.match.board).toEqual(host.match.board);
+    expect(host.room.state.phase).toBe("ready");
+    expect(guest.room.state.phase).toBe("ready");
+  });
+
+  it("does not let the host resume on a snapshot the guest could not resume from", async () => {
+    const { host, guest, flush } = await startReadyMatch();
+    sees(host, ["host"]);
+    sees(guest, ["guest"]);
+
+    // The host sees the guest back first and pushes; the guest still waits for the host.
+    sees(host, ["host", "guest"]);
+    await flush();
+
+    expect(sentOfType(guest, "snapshot-applied")).toHaveLength(0);
+    expect(host.room.matchTransport?.status).toBe("resynchronizing");
+    expect(guest.room.matchTransport?.status).toBe("interrupted");
+
+    sees(guest, ["host", "guest"]);
+    await flush();
+    expect(host.room.state.phase).toBe("ready");
+    expect(guest.room.state.phase).toBe("ready");
+  });
+
+  it("recovers a revision-gap handshake that a peer loss interrupted", async () => {
+    const { network, host, guest, flush } = await startReadyMatch();
+    network.lose = (message) => message.type === "snapshot-request";
+    receive(guest, { protocolVersion: 1, type: "drop", revision: 4, col: 0 });
+    await flush();
+    expect(guest.room.matchTransport?.status).toBe("resynchronizing");
+
+    network.lose = null;
+    sees(guest, ["guest"]);
+    expect(guest.room.matchTransport?.status).toBe("interrupted");
+    sees(guest, ["host", "guest"]);
+    await flush();
+
+    expect(sentOfType(guest, "snapshot-request")).toHaveLength(2);
+    expect(guest.room.state.phase).toBe("ready");
+    expect(host.room.state.phase).toBe("ready");
+  });
+
+  it("ends as no contest without recording a winner when the peer does not return", async () => {
+    const { host, guest, flush } = await startReadyMatch();
+    // Red is one Drop from winning.
+    for (let i = 0; i < 3; i++) {
+      act(() => host.match.drop(0));
+      await flush();
+      act(() => guest.match.drop(1));
+      await flush();
+    }
+
+    sees(host, ["host"]);
+    sees(guest, ["guest"]);
+    await elapse(20_000);
+
+    for (const peer of [host, guest]) {
+      expect(peer.room.state.phase).toBe("failed");
+      expect(peer.room.state.phase === "failed" && peer.room.state.error.kind).toBe("peer-timeout");
+      expect(peer.match.inputDisabled).toBe(true);
+    }
+    act(() => host.match.drop(0));
+    await flush();
+    expect(host.match.winner).toBeNull();
+    expect(host.onGameEnd).not.toHaveBeenCalled();
+    expect(guest.onGameEnd).not.toHaveBeenCalled();
+  });
+
+  it("refuses a peer that returns from a reloaded page, without recording a winner", async () => {
+    const { host } = await startReadyMatch();
+
+    sees(host, ["host"]);
+    act(() => host.channel().input.onPresence([presence("host"), presence("guest", { clientId: "client-guest-reloaded" })]));
+
+    expect(host.room.state.phase).toBe("failed");
+    expect(host.room.state.phase === "failed" && host.room.state.error.kind).toBe("resync-failed");
+    expect(host.match.inputDisabled).toBe(true);
+    expect(host.onGameEnd).not.toHaveBeenCalled();
   });
 });

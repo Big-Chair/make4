@@ -8,6 +8,8 @@ import { recordGame, fetchLeaderboard, fetchStats, recordVisit, type PlayerStats
 import { save as saveToken, type TokenConfig } from "./components/tokens";
 import { OnlineLobby } from "./components/OnlineLobby";
 import { useRoom } from "./components/useRoom";
+import { persistsMatchResult } from "./components/matchResult";
+import { roomNoticeFor } from "./components/RoomStatusOverlay";
 import { ThemeProvider } from "./components/ThemeContext";
 
 export interface Scoreboard {
@@ -66,6 +68,15 @@ export function GameApp() {
     setInitialRoomCode(null);
     startTransition(() => setScreen("game"));
   }, [readyRoom, screen]);
+
+  // A Room Module that starts failed has refused to recover a Match from before a
+  // page reload; show that refusal in the lobby instead of silently starting over.
+  useEffect(() => {
+    if (room.state.phase !== "failed") return;
+    setGameMode("online");
+    setScreen("lobby");
+    // Mount only: a later failure belongs to the screen it happens on.
+  }, []);
 
   // Record visit once per session
   useEffect(() => {
@@ -161,12 +172,9 @@ export function GameApp() {
       ...(winner === "draw" ? { draws: prev.draws + 1 } : { [winner]: prev[winner] + 1 }),
     }));
 
-    // Only the host persists an online Match result; both peers keep local score.
-    // A failed Room is not live, so it never persists a result.
-    const hostPersists = gameMode !== "online" || liveRoom?.role === "host";
-
-    // Persist to leaderboard if playing with a timer (any duration counts)
-    if (timerDuration > 0 && hostPersists) {
+    // Both peers keep local score; only a timed Match persists, and online only
+    // the host of a live Room — a no-contest Room never records a result.
+    if (persistsMatchResult({ gameMode, timerDuration, room: room.state })) {
       const mappedWinner = winner === "red" ? "player1" : winner === "yellow" ? "player2" : "draw";
       await recordGame(p1Name, p2Name, mappedWinner, gameMode, timerDuration);
     }
@@ -234,6 +242,7 @@ export function GameApp() {
           p1Token={p1TokenEffective}
           p2Token={p2TokenEffective}
           transport={gameMode === "online" ? room.matchTransport ?? undefined : undefined}
+          roomNotice={gameMode === "online" ? roomNoticeFor(room.state) : null}
           onP1TokenChange={handleP1TokenChange}
           onP2TokenChange={handleP2TokenChange}
         />
