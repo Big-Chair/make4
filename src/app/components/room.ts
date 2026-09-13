@@ -73,7 +73,17 @@ export type RoomState =
   | { phase: "waiting"; room: RoomRecord }
   | { phase: "synchronizing"; room: RoomRecord; role: Role }
   | { phase: "ready"; room: ReadyRoom }
+  | {
+      phase: "interrupted";
+      room: ReadyRoom;
+      /** Epoch ms by which resynchronization must complete, or the Room fails. */
+      reconnectDeadline: number;
+      reason: InterruptReason;
+    }
   | { phase: "failed"; error: RoomFailure; previousRoom?: ReadyRoom };
+
+/** Why a Ready Room stopped accepting Match input. */
+export type InterruptReason = "revision-gap";
 
 // ─── Wire protocol ───
 
@@ -97,20 +107,35 @@ export interface DecodedRoomPresence extends Omit<RoomPresence, "token"> {
 }
 
 /** Broadcast messages. `token-sync` is Room state and is never forwarded to the
- *  Match; the rest cross the Match transport. */
+ *  Match; the rest cross the Match transport.
+ *
+ *  A `snapshot` payload is opaque to the Room: the Match owns its contents and
+ *  decodes it (`matchSnapshot.ts`), so the Room never interprets Board state. */
 export type MatchWireMessage =
   | { protocolVersion: typeof PROTOCOL_VERSION; type: "drop"; revision: number; col: number }
   | { protocolVersion: typeof PROTOCOL_VERSION; type: "blast"; revision: number; row: number; col: number }
   | { protocolVersion: typeof PROTOCOL_VERSION; type: "rematch"; matchId: string }
-  | { protocolVersion: typeof PROTOCOL_VERSION; type: "token-sync"; token: TokenConfig };
+  | { protocolVersion: typeof PROTOCOL_VERSION; type: "token-sync"; token: TokenConfig }
+  | { protocolVersion: typeof PROTOCOL_VERSION; type: "snapshot-request"; requestId: string }
+  | { protocolVersion: typeof PROTOCOL_VERSION; type: "snapshot"; requestId: string; snapshot: unknown }
+  | { protocolVersion: typeof PROTOCOL_VERSION; type: "snapshot-applied"; requestId: string; revision: number };
 
 /** The single Room seam visible to the Match. Its identity is stable for one
- *  Room generation, so the Match never re-subscribes mid-Match. */
+ *  Room generation, so the Match never re-subscribes mid-Match; `status` is read
+ *  live from the Room. */
 export interface OnlineMatchTransport {
   role: Role;
-  status: "ready" | "interrupted" | "resynchronizing";
+  /** Match input and its timer run only while this is `ready`. */
+  readonly status: "ready" | "interrupted" | "resynchronizing";
   send(message: MatchWireMessage): Promise<void>;
   subscribe(handler: (message: MatchWireMessage) => void): () => void;
+  /** The Match saw its Board may have diverged: pause and start resynchronizing.
+   *  The Room owns the deadline by which `resume` must follow. No-op unless ready. */
+  interrupt(reason: InterruptReason): void;
+  /** This peer's snapshot acknowledgement completed: the Room is ready again. */
+  resume(): void;
+  /** Resynchronization cannot complete (e.g. an undecodable snapshot). */
+  fail(message: string): void;
 }
 
 // ─── Decoders ───
@@ -201,6 +226,25 @@ export function decodeMatchWireMessage(value: unknown): MatchWireMessage | null 
       if (!token) return null;
       return { protocolVersion: PROTOCOL_VERSION, type: "token-sync", token };
     }
+    case "snapshot-request":
+      if (typeof value.requestId !== "string") return null;
+      return { protocolVersion: PROTOCOL_VERSION, type: "snapshot-request", requestId: value.requestId };
+    case "snapshot":
+      if (typeof value.requestId !== "string" || !("snapshot" in value)) return null;
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        type: "snapshot",
+        requestId: value.requestId,
+        snapshot: value.snapshot,
+      };
+    case "snapshot-applied":
+      if (typeof value.requestId !== "string" || typeof value.revision !== "number") return null;
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        type: "snapshot-applied",
+        requestId: value.requestId,
+        revision: value.revision,
+      };
     default:
       return null;
   }

@@ -8,7 +8,8 @@ import { findBestBlastTarget } from "./blast";
 import { getBestMove, getBestBlastMove, type Difficulty } from "./connect4AI";
 import type { GameMode } from "./StartScreen";
 import type { OnlineMatchTransport } from "./room";
-import { PROTOCOL_VERSION } from "./room";
+import { PROTOCOL_VERSION, colorFor } from "./room";
+import { decodeMatchSnapshot, type MatchSnapshot } from "./matchSnapshot";
 import {
   playDrop,
   playBlast,
@@ -20,8 +21,10 @@ import {
   playClick,
 } from "./useSoundEffects";
 
-function newMatchId(): string {
-  return `match-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+const OPENING_MATCH_ID = "match-opening";
+
+function newId(prefix: "match" | "resync"): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 /**
@@ -30,7 +33,7 @@ function newMatchId(): string {
  * Owns everything between "a player intends a move" and "the board reflects it":
  * turn legality, applying the move locally, broadcasting it when online, replying
  * as the bot, applying the opponent's broadcast, the pre-game countdown, and
- * recording the winner exactly once.
+ * recording the winner once per Match identity.
  *
  * Callers learn four verbs — `drop`, `blast`, `autoBlast`, `reset` — and never
  * re-derive turn checks or remember to broadcast. Online play is injected as the
@@ -43,7 +46,17 @@ function newMatchId(): string {
  *  - `drop`/`blast`/`autoBlast` do NOT play sound for the local human path —
  *    GameBoard / CameraControl own that. Bot and opponent-received moves DO play
  *    sound, since those never pass through the board UI.
- *  - `onGameEnd` fires exactly once per decided game.
+ *  - `onGameEnd` fires at most once per Match identity — restoring a decided
+ *    Match Snapshot cannot record its winner again.
+ *
+ * Online revisions: each successfully applied Drop or Blast advances the Match
+ * revision and is broadcast with it; rejected local actions do neither. An
+ * incoming action applies only at exactly revision + 1. Anything else — missing,
+ * duplicate, out of order, or unplayable — interrupts the Room instead of
+ * changing the Board, and the host's authoritative Match Snapshot repairs it:
+ * the guest requests it (or the host pushes it when the host saw the gap), the
+ * guest restores it atomically and acknowledges the revision, and only then do
+ * input and the timer resume.
  */
 export interface UseMatchOptions {
   gameMode: GameMode;
@@ -71,7 +84,7 @@ export interface UseMatchReturn {
   // Turn / role
   myColor: "red" | "yellow";
   isMyTurn: boolean;
-  /** True when the board should reject input (bot's turn, opponent's turn, or countdown). */
+  /** True when the board should reject input (bot's turn, opponent's turn, countdown, or an online pause). */
   inputDisabled: boolean;
 
   // Blast targeting UI mode
@@ -107,7 +120,6 @@ export function useMatch({
   const [blastMode, setBlastMode] = useState(false);
   const [botThinking, setBotThinking] = useState(false);
   const botMoveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastRecordedWinner = useRef<string | null>(null);
   const lastWinnerColor = useRef<"red" | "yellow" | null>(null);
 
   // Pre-game countdown
@@ -118,66 +130,198 @@ export function useMatch({
   const winnerOverlayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Online: which color this player controls + whose turn it is
-  const myColor = transport?.role === "guest" ? "yellow" : "red";
+  const myColor = colorFor(transport?.role ?? "host");
   const isMyTurn = gameMode !== "online" || game.currentPlayer === myColor;
+  // Online input and clocks run only while the Room's Match transport is ready.
+  const onlinePaused = gameMode === "online" && transport?.status !== "ready";
 
-  // Online: the local action revision (incremented per applied action) and the
-  // current Match identity. Revision-gap repair lands with the Match Snapshot work.
+  // Match identity and online revision. A rematch or restored snapshot replaces both.
+  // Both online peers start a Room's first Match under the same identity (the
+  // Match remounts per Room), so a restored snapshot is recognizably the same Match.
+  const [matchId, setMatchId] = useState(() =>
+    gameMode === "online" ? OPENING_MATCH_ID : newId("match"),
+  );
+  const matchIdRef = useRef(matchId);
   const revisionRef = useRef(0);
-  const matchIdRef = useRef(newMatchId());
+  /** The Match identity whose winner has been recorded. */
+  const recordedMatchIdRef = useRef<string | null>(null);
+  /** Host: the snapshot request awaiting the guest's acknowledgement. */
+  const pendingSnapshotRef = useRef<string | null>(null);
 
-  // Online: register a move handler that fires immediately on broadcast.
-  // Refs keep the handler pointed at the freshest game callbacks.
-  const dropPieceRef = useRef(game.dropPiece);
-  dropPieceRef.current = game.dropPiece;
-  const blastPieceRef = useRef(game.blastPiece);
-  blastPieceRef.current = game.blastPiece;
-  const resetGameRef = useRef(game.resetGame);
-  resetGameRef.current = game.resetGame;
+  // Refs keep the transport handler pointed at the freshest state and callbacks.
+  const gameRef = useRef(game);
+  gameRef.current = game;
+  const countdownRef = useRef(countdown);
+  countdownRef.current = countdown;
+  const soundRef = useRef(soundEnabled);
+  soundRef.current = soundEnabled;
 
+  const clearWinnerOverlay = useCallback(() => {
+    setShowWinnerOverlay(false);
+    if (winnerOverlayTimeoutRef.current) {
+      clearTimeout(winnerOverlayTimeoutRef.current);
+      winnerOverlayTimeoutRef.current = null;
+    }
+  }, []);
+
+  const startMatch = useCallback((id: string) => {
+    matchIdRef.current = id;
+    setMatchId(id);
+    revisionRef.current = 0;
+  }, []);
+
+  // Online: apply the opponent's broadcasts and run snapshot resynchronization.
   useEffect(() => {
     if (!transport) return;
+
+    const createSnapshot = (): MatchSnapshot => {
+      const liveGame = gameRef.current;
+      return {
+        protocolVersion: PROTOCOL_VERSION,
+        matchId: matchIdRef.current,
+        revision: revisionRef.current,
+        board: liveGame.board,
+        currentPlayer: liveGame.currentPlayer,
+        winner: liveGame.winner,
+        winningCells: liveGame.winningCells,
+        redBlastToken: liveGame.redBlastToken,
+        yellowBlastToken: liveGame.yellowBlastToken,
+        timer: liveGame.timer,
+        countdown: countdownRef.current,
+      };
+    };
+
+    const sendSnapshot = (requestId: string) => {
+      pendingSnapshotRef.current = requestId;
+      void transport.send({
+        protocolVersion: PROTOCOL_VERSION,
+        type: "snapshot",
+        requestId,
+        snapshot: createSnapshot(),
+      });
+    };
+
+    // All state setters below run in one synchronous batch: one render, no half-restored Match.
+    const restoreSnapshot = (snapshot: MatchSnapshot) => {
+      gameRef.current.restore(snapshot);
+      matchIdRef.current = snapshot.matchId;
+      setMatchId(snapshot.matchId);
+      revisionRef.current = snapshot.revision;
+      setCountdown(snapshot.countdown);
+      setBlastMode(false);
+    };
+
+    const repairDivergence = () => {
+      transport.interrupt("revision-gap");
+      if (transport.role === "host") {
+        // The host is authoritative: push its snapshot for the guest to restore.
+        sendSnapshot(newId("resync"));
+      } else {
+        void transport.send({
+          protocolVersion: PROTOCOL_VERSION,
+          type: "snapshot-request",
+          requestId: newId("resync"),
+        });
+      }
+    };
+
+    const opponentColor = colorFor(transport.role === "host" ? "guest" : "host");
+
     return transport.subscribe((msg) => {
-      if (msg.type === "drop") {
-        revisionRef.current = msg.revision;
-        dropPieceRef.current(msg.col);
-        if (soundEnabled) playDrop();
-      } else if (msg.type === "blast") {
-        revisionRef.current = msg.revision;
-        blastPieceRef.current(msg.row, msg.col);
-        if (soundEnabled) playBlast();
-      } else if (msg.type === "rematch") {
-        matchIdRef.current = msg.matchId;
-        revisionRef.current = 0;
-        const starter = lastWinnerColor.current || undefined;
-        resetGameRef.current(starter);
-        setBlastMode(false);
-        setShowWinnerOverlay(false);
-        if (winnerOverlayTimeoutRef.current) {
-          clearTimeout(winnerOverlayTimeoutRef.current);
-          winnerOverlayTimeoutRef.current = null;
+      switch (msg.type) {
+        case "drop":
+        case "blast": {
+          // Mid-resynchronization, the incoming snapshot supersedes in-flight actions.
+          if (transport.status !== "ready") return;
+          const liveGame = gameRef.current;
+          if (msg.revision !== revisionRef.current + 1 || liveGame.currentPlayer !== opponentColor) {
+            repairDivergence();
+            return;
+          }
+          const applied =
+            msg.type === "drop" ? liveGame.dropPiece(msg.col) : liveGame.blastPiece(msg.row, msg.col);
+          if (!applied) {
+            repairDivergence();
+            return;
+          }
+          revisionRef.current = msg.revision;
+          if (soundRef.current) {
+            if (msg.type === "drop") playDrop();
+            else playBlast();
+          }
+          return;
         }
-        setCountdown(4);
-        lastRecordedWinner.current = null;
-        if (soundEnabled) playReset();
+        case "rematch": {
+          // Mid-resynchronization the host's snapshot already carries its Match identity.
+          if (transport.status !== "ready") return;
+          startMatch(msg.matchId);
+          const starter = lastWinnerColor.current || undefined;
+          gameRef.current.resetGame(starter);
+          setBlastMode(false);
+          clearWinnerOverlay();
+          setCountdown(4);
+          if (soundRef.current) playReset();
+          return;
+        }
+        case "snapshot-request": {
+          if (transport.role !== "host") return;
+          transport.interrupt("revision-gap");
+          sendSnapshot(msg.requestId);
+          return;
+        }
+        case "snapshot": {
+          if (transport.role !== "guest") return;
+          const snapshot = decodeMatchSnapshot(msg.snapshot);
+          if (!snapshot) {
+            console.warn("[Match] Ignoring undecodable Match Snapshot:", msg.snapshot);
+            transport.fail("The host's Match Snapshot could not be read.");
+            return;
+          }
+          transport.interrupt("revision-gap");
+          restoreSnapshot(snapshot);
+          transport
+            .send({
+              protocolVersion: PROTOCOL_VERSION,
+              type: "snapshot-applied",
+              requestId: msg.requestId,
+              revision: snapshot.revision,
+            })
+            .then(
+              () => transport.resume(),
+              () => transport.fail("Could not acknowledge the host's Match Snapshot."),
+            );
+          return;
+        }
+        case "snapshot-applied": {
+          if (transport.role !== "host" || msg.requestId !== pendingSnapshotRef.current) return;
+          pendingSnapshotRef.current = null;
+          if (msg.revision !== revisionRef.current) {
+            transport.fail("The guest acknowledged a different Match revision.");
+            return;
+          }
+          transport.resume();
+          return;
+        }
+        default:
+          return;
       }
     });
-  }, [transport, soundEnabled]);
+  }, [transport, startMatch, clearWinnerOverlay]);
 
-  // Pause the game clock during the countdown
+  // Pause the game clock during the countdown and while an online Match is paused
   useEffect(() => {
-    game.setPaused(countdown > 0);
-  }, [countdown]);
+    game.setPaused(countdown > 0 || onlinePaused);
+  }, [countdown, onlinePaused]);
 
   // Tick the countdown
   useEffect(() => {
-    if (countdown <= 0) return;
+    if (countdown <= 0 || onlinePaused) return;
     const timeout = setTimeout(() => {
       if (soundEnabled && countdown > 1) playClick();
       setCountdown((prev) => prev - 1);
     }, 1000);
     return () => clearTimeout(timeout);
-  }, [countdown, soundEnabled]);
+  }, [countdown, soundEnabled, onlinePaused]);
 
   const toggleBlast = useCallback(() => {
     if (!game.winner) {
@@ -189,40 +333,34 @@ export function useMatch({
     }
   }, [game.hasBlastToken, game.winner]);
 
-  // Record the winner exactly once, play the sting, schedule the overlay
+  // Record the winner once per Match identity, play the sting, schedule the overlay
   useEffect(() => {
-    if (game.winner && game.winner !== lastRecordedWinner.current) {
-      lastRecordedWinner.current = game.winner as string;
-      // Only update the next starter on a decisive win, not on draws
-      if (game.winner === "red" || game.winner === "yellow") {
-        lastWinnerColor.current = game.winner;
-      }
-      onGameEnd(game.winner as "red" | "yellow" | "draw");
-      if (game.winner === "red" || game.winner === "yellow") {
-        if (soundEnabled) playWin();
-      } else {
-        if (soundEnabled) playDraw();
-      }
-
-      const delay = game.winner === "draw" ? 1500 : 3000;
-      winnerOverlayTimeoutRef.current = setTimeout(() => {
-        setShowWinnerOverlay(true);
-      }, delay);
+    if (!game.winner || recordedMatchIdRef.current === matchId) return;
+    recordedMatchIdRef.current = matchId;
+    // Only update the next starter on a decisive win, not on draws
+    if (game.winner === "red" || game.winner === "yellow") {
+      lastWinnerColor.current = game.winner;
     }
-  }, [game.winner, onGameEnd, soundEnabled]);
+    onGameEnd(game.winner as "red" | "yellow" | "draw");
+    if (game.winner === "red" || game.winner === "yellow") {
+      if (soundEnabled) playWin();
+    } else {
+      if (soundEnabled) playDraw();
+    }
 
-  // Clear winner tracking when the game resets
+    const delay = game.winner === "draw" ? 1500 : 3000;
+    winnerOverlayTimeoutRef.current = setTimeout(() => {
+      setShowWinnerOverlay(true);
+    }, delay);
+  }, [game.winner, matchId, onGameEnd, soundEnabled]);
+
+  // Clear winner display when the game resets
   useEffect(() => {
     if (!game.winner) {
-      lastRecordedWinner.current = null;
       lastWinnerColor.current = null;
-      setShowWinnerOverlay(false);
-      if (winnerOverlayTimeoutRef.current) {
-        clearTimeout(winnerOverlayTimeoutRef.current);
-        winnerOverlayTimeoutRef.current = null;
-      }
+      clearWinnerOverlay();
     }
-  }, [game.winner]);
+  }, [game.winner, clearWinnerOverlay]);
 
   // Timer tick sounds
   useEffect(() => {
@@ -272,78 +410,60 @@ export function useMatch({
   }, [gameMode, game.currentPlayer, game.winner, game.board, difficulty, soundEnabled, countdown, game.yellowBlastToken]);
 
   // ─── Move verbs ───
-  const drop = useCallback((col: number) => {
-    if (gameMode === "online" && !isMyTurn) return;
-    game.dropPiece(col);
-    if (transport) {
+
+  /** Broadcast a locally applied action at the next revision. */
+  const broadcastAction = useCallback(
+    (action: { type: "drop"; col: number } | { type: "blast"; row: number; col: number }) => {
+      if (!transport) return;
       revisionRef.current += 1;
-      void transport.send({
-        protocolVersion: PROTOCOL_VERSION,
-        type: "drop",
-        revision: revisionRef.current,
-        col,
-      });
-    }
-  }, [game.dropPiece, gameMode, isMyTurn, transport]);
+      void transport.send({ protocolVersion: PROTOCOL_VERSION, ...action, revision: revisionRef.current });
+    },
+    [transport],
+  );
+
+  const drop = useCallback((col: number) => {
+    if (onlinePaused || (gameMode === "online" && !isMyTurn)) return;
+    // A rejected Drop neither advances the revision nor reaches the wire.
+    if (!game.dropPiece(col)) return;
+    broadcastAction({ type: "drop", col });
+  }, [game.dropPiece, gameMode, isMyTurn, onlinePaused, broadcastAction]);
 
   const blast = useCallback((row: number, col: number) => {
-    if (gameMode === "online" && !isMyTurn) return;
-    game.blastPiece(row, col);
-    if (transport) {
-      revisionRef.current += 1;
-      void transport.send({
-        protocolVersion: PROTOCOL_VERSION,
-        type: "blast",
-        revision: revisionRef.current,
-        row,
-        col,
-      });
-    }
-  }, [game.blastPiece, gameMode, isMyTurn, transport]);
+    if (onlinePaused || (gameMode === "online" && !isMyTurn)) return;
+    if (!game.blastPiece(row, col)) return;
+    broadcastAction({ type: "blast", row, col });
+  }, [game.blastPiece, gameMode, isMyTurn, onlinePaused, broadcastAction]);
 
   // Find the best target and blast it in one action (camera fist gesture)
   const autoBlast = useCallback(() => {
     if (game.winner || !game.hasBlastToken) return;
-    if (gameMode === "online" && !isMyTurn) return;
+    if (onlinePaused || (gameMode === "online" && !isMyTurn)) return;
 
     const bestPos = findBestBlastTarget(game.board, game.currentPlayer);
-    if (bestPos) {
-      game.blastPiece(bestPos[0], bestPos[1]);
-      if (transport) {
-        revisionRef.current += 1;
-        void transport.send({
-          protocolVersion: PROTOCOL_VERSION,
-          type: "blast",
-          revision: revisionRef.current,
-          row: bestPos[0],
-          col: bestPos[1],
-        });
-      }
+    if (bestPos && game.blastPiece(bestPos[0], bestPos[1])) {
+      broadcastAction({ type: "blast", row: bestPos[0], col: bestPos[1] });
     }
-  }, [game.winner, game.hasBlastToken, game.board, game.currentPlayer, game.blastPiece, gameMode, isMyTurn, transport]);
+  }, [game.winner, game.hasBlastToken, game.board, game.currentPlayer, game.blastPiece, gameMode, isMyTurn, onlinePaused, broadcastAction]);
 
   const reset = useCallback(() => {
+    if (onlinePaused) return;
     const starter = lastWinnerColor.current || undefined;
     game.resetGame(starter);
     setBlastMode(false);
-    setShowWinnerOverlay(false);
-    if (winnerOverlayTimeoutRef.current) {
-      clearTimeout(winnerOverlayTimeoutRef.current);
-      winnerOverlayTimeoutRef.current = null;
-    }
+    clearWinnerOverlay();
     setCountdown(4);
     if (soundEnabled) playReset();
+    // A rematch is a fresh Match identity with its revision reset.
+    const id = newId("match");
+    startMatch(id);
     if (transport) {
-      // A rematch is a fresh Match identity with its revision reset.
-      matchIdRef.current = newMatchId();
-      revisionRef.current = 0;
       void transport.send({
         protocolVersion: PROTOCOL_VERSION,
         type: "rematch",
-        matchId: matchIdRef.current,
+        matchId: id,
       });
     }
-  }, [game.resetGame, soundEnabled, transport]);
+  }, [game.resetGame, soundEnabled, transport, onlinePaused, clearWinnerOverlay, startMatch]);
 
   const countdownLabel = countdown > 0
     ? countdown === 1 ? "GO!" : `${countdown - 1}`
@@ -352,6 +472,7 @@ export function useMatch({
   const inputDisabled =
     (gameMode === "bot" && game.currentPlayer === "yellow") ||
     (gameMode === "online" && !isMyTurn) ||
+    onlinePaused ||
     countdown > 0;
 
   return {

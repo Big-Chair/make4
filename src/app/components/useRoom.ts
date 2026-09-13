@@ -20,6 +20,12 @@
  * Player Tokens are cosmetic: they never gate readiness, fall back to the Role's
  * colour default when absent, and reconcile from Presence and Broadcast whenever
  * they arrive or change.
+ *
+ * When the Match reports a possible Board divergence, the Room becomes
+ * **interrupted**: the transport stops being `ready` (pausing Match input and its
+ * timer) until the Match resumes it after snapshot acknowledgement, or the
+ * resynchronization deadline fails the Room. The Room owns that timing; it never
+ * interprets Board contents.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -34,6 +40,7 @@ import {
   type Role,
   type RoomAdapter,
   type RoomChannel,
+  type InterruptReason,
   type RoomFailure,
   type RoomPresence,
   type RoomRecord,
@@ -43,6 +50,10 @@ import { supabaseRoomAdapter } from "./roomSupabaseAdapter";
 import { defaultTokenFor, type TokenConfig } from "./tokens";
 
 const POLL_INTERVAL_MS = 2000;
+/** How long an interrupted Room may take to resynchronize before it fails. */
+export const RESYNC_DEADLINE_MS = 20_000;
+
+type TransportStatus = OnlineMatchTransport["status"];
 
 export interface UseRoomReturn {
   state: RoomState;
@@ -65,6 +76,7 @@ interface RoomInternal {
   failure: RoomFailure | null;
   /** Latched on the first Ready Room of a generation; readiness is emitted once. */
   ready: boolean;
+  interruption: { reason: InterruptReason; deadline: number } | null;
 }
 
 const IDLE: RoomInternal = {
@@ -77,6 +89,7 @@ const IDLE: RoomInternal = {
   peerToken: null,
   failure: null,
   ready: false,
+  interruption: null,
 };
 
 export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomReturn {
@@ -93,21 +106,33 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
   const localTokenRef = useRef<TokenConfig>(IDLE.localToken);
   const roleRef = useRef<Role | null>(null);
   const lastReadyRoomRef = useRef<ReadyRoom | null>(null);
+  /** Read live by the transport's `status` getter. */
+  const statusRef = useRef<TransportStatus>("ready");
+  const deadlineRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Teardown: channel, polling, handlers — exactly once per generation ──
+  const clearDeadline = useCallback(() => {
+    if (deadlineRef.current) {
+      clearTimeout(deadlineRef.current);
+      deadlineRef.current = null;
+    }
+  }, []);
+
+  // ── Teardown: channel, polling, deadline, handlers — exactly once per generation ──
   const releaseGeneration = useCallback((): Promise<void> => {
     generationRef.current += 1;
     if (pollingRef.current) {
       clearInterval(pollingRef.current);
       pollingRef.current = null;
     }
+    clearDeadline();
+    statusRef.current = "ready";
     const channel = channelRef.current;
     channelRef.current = null;
     transportRef.current = null;
     handlersRef.current.clear();
     roleRef.current = null;
     return channel ? channel.close() : Promise.resolve();
-  }, []);
+  }, [clearDeadline]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -211,10 +236,14 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
       channelRef.current = channel;
 
       // One transport per generation, with stable identity for the Match.
+      const current = () => generationRef.current === generation;
       transportRef.current = {
         role,
-        status: "ready",
+        get status() {
+          return current() ? statusRef.current : "interrupted";
+        },
         send: async (message) => {
+          if (!current()) return;
           await channelRef.current?.send(message);
         },
         subscribe: (handler) => {
@@ -223,9 +252,33 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
             handlersRef.current.delete(handler);
           };
         },
+        interrupt: (reason) => {
+          if (!current() || statusRef.current !== "ready") return;
+          // Both peers are still live, so resynchronization starts at once.
+          statusRef.current = "resynchronizing";
+          const deadline = Date.now() + RESYNC_DEADLINE_MS;
+          clearDeadline();
+          deadlineRef.current = setTimeout(() => {
+            deadlineRef.current = null;
+            fail(generation, {
+              kind: "resync-failed",
+              message: "The Match could not be resynchronized in time.",
+            });
+          }, RESYNC_DEADLINE_MS);
+          update(generation, { interruption: { reason, deadline } });
+        },
+        resume: () => {
+          if (!current() || statusRef.current === "ready") return;
+          clearDeadline();
+          statusRef.current = "ready";
+          update(generation, { interruption: null });
+        },
+        fail: (message) => {
+          fail(generation, { kind: "resync-failed", message });
+        },
       };
     },
-    [adapter, fail, presencePayload, update],
+    [adapter, clearDeadline, fail, presencePayload, update],
   );
 
   // ── Host polling: the persisted-state fallback for a guest join ──
@@ -391,6 +444,14 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
       };
       const room = projectReadyRoom(record, internal.role, tokens);
       lastReadyRoomRef.current = room;
+      if (internal.interruption) {
+        return {
+          phase: "interrupted",
+          room,
+          reason: internal.interruption.reason,
+          reconnectDeadline: internal.interruption.deadline,
+        };
+      }
       return { phase: "ready", room };
     }
     if (persistedReady) return { phase: "synchronizing", room: record, role: internal.role };
@@ -398,7 +459,8 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
     // `internal` is the single source; `isReady`/`persistedReady` derive from it.
   }, [internal, isReady, persistedReady]);
 
-  const matchTransport = state.phase === "ready" ? transportRef.current : null;
+  const matchTransport =
+    state.phase === "ready" || state.phase === "interrupted" ? transportRef.current : null;
 
   return { state, matchTransport, create, join, updateLocalToken, leave };
 }
