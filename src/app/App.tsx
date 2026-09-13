@@ -7,7 +7,7 @@ import { Difficulty } from "./components/connect4AI";
 import { recordGame, fetchLeaderboard, fetchStats, recordVisit, type PlayerStats, type SiteStats } from "./components/api";
 import { save as saveToken, type TokenConfig } from "./components/tokens";
 import { OnlineLobby } from "./components/OnlineLobby";
-import { useOnlineGame } from "./components/useOnlineGame";
+import { useRoom } from "./components/useRoom";
 import { ThemeProvider } from "./components/ThemeContext";
 
 export interface Scoreboard {
@@ -41,7 +41,28 @@ export function GameApp() {
   const [leaderboardTokenConfigs, setLeaderboardTokenConfigs] = useState<Record<string, any>>({});
   const [leaderboardLevel, setLeaderboardLevel] = useState("");
 
-  const online = useOnlineGame();
+  // The owning Room Module. An online Match starts from a Ready Room and nothing else.
+  const room = useRoom();
+  const readyRoom = room.state.phase === "ready" ? room.state.room : null;
+  // What the Match renders: the Ready Room, or the last one if the Room failed —
+  // a failure must not blank out the players mid-Match.
+  const activeRoom =
+    readyRoom ?? (room.state.phase === "failed" ? room.state.previousRoom ?? null : null);
+
+  // Start the online Match the moment a Ready Room exists — no fixed delay, no
+  // Role-to-player assembly in the lobby.
+  useEffect(() => {
+    if (!readyRoom || screen !== "lobby") return;
+    const myName =
+      readyRoom.role === "host"
+        ? readyRoom.participants.red.name
+        : readyRoom.participants.yellow.name;
+    setGameMode("online");
+    setTimerDuration(readyRoom.timerDuration);
+    setLastPlayerName(myName);
+    setInitialRoomCode(null);
+    startTransition(() => setScreen("game"));
+  }, [readyRoom, screen]);
 
   // Record visit once per session
   useEffect(() => {
@@ -124,29 +145,42 @@ export function GameApp() {
     startTransition(() => setScreen("game"));
   };
 
+  // Online participants come from the Ready Room projection, so a Player Token
+  // that arrives (or changes) after the Match starts updates live.
+  const p1Name = activeRoom ? activeRoom.participants.red.name : player1Name;
+  const p2Name = activeRoom ? activeRoom.participants.yellow.name : player2Name;
+  const p1TokenEffective = activeRoom ? activeRoom.participants.red.token : p1Token;
+  const p2TokenEffective = activeRoom ? activeRoom.participants.yellow.token : p2Token;
+
   const handleGameEnd = async (winner: "red" | "yellow" | "draw") => {
     setScore((prev) => ({
       ...prev,
       ...(winner === "draw" ? { draws: prev.draws + 1 } : { [winner]: prev[winner] + 1 }),
     }));
 
+    // Only the host persists an online Match result; both peers keep local score.
+    const hostPersists = gameMode !== "online" || readyRoom?.role === "host";
+
     // Persist to leaderboard if playing with a timer (any duration counts)
-    if (timerDuration > 0) {
+    if (timerDuration > 0 && hostPersists) {
       const mappedWinner = winner === "red" ? "player1" : winner === "yellow" ? "player2" : "draw";
-      await recordGame(player1Name, player2Name, mappedWinner, gameMode, timerDuration);
+      await recordGame(p1Name, p2Name, mappedWinner, gameMode, timerDuration);
     }
   };
 
-  // Save token configs to server when they change (for leaderboard persistence)
+  // Save token configs to server when they change (for leaderboard persistence).
+  // Online, the local player's token also goes through the Room so the peer sees it.
   const handleP1TokenChange = useCallback((config: TokenConfig) => {
     setP1Token(config);
-    if (player1Name) saveToken(player1Name, config);
-  }, [player1Name]);
+    if (p1Name) saveToken(p1Name, config);
+    if (readyRoom?.role === "host") room.updateLocalToken(config);
+  }, [p1Name, readyRoom, room]);
 
   const handleP2TokenChange = useCallback((config: TokenConfig) => {
     setP2Token(config);
-    if (player2Name) saveToken(player2Name, config);
-  }, [player2Name]);
+    if (p2Name) saveToken(p2Name, config);
+    if (readyRoom?.role === "guest") room.updateLocalToken(config);
+  }, [p2Name, readyRoom, room]);
 
   return (
     <ThemeProvider>
@@ -168,32 +202,20 @@ export function GameApp() {
         />
       ) : screen === "lobby" ? (
         <OnlineLobby
-          online={online}
+          room={room}
           initialRoomCode={initialRoomCode}
           siteStats={siteStats}
-          onGameReady={(p1, p2, timer, sound, p1Tok, p2Tok) => {
-            setGameMode("online");
-            setPlayer1Name(p1);
-            setPlayer2Name(p2);
-            setLastPlayerName(p1);
-            setTimerDuration(timer);
-            setSoundEnabled(sound);
-            setP1Token(p1Tok);
-            setP2Token(p2Tok);
-            setInitialRoomCode(null);
-            startTransition(() => setScreen("game"));
-          }}
           onBack={() => { setInitialRoomCode(null); setScreen("start"); }}
         />
       ) : (
         <GameScreen
-          onExit={() => { online.disconnect(); setScreen("start"); }}
+          onExit={() => { void room.leave(); setScreen("start"); }}
           gameMode={gameMode}
           difficulty={difficulty}
           score={score}
           onGameEnd={handleGameEnd}
-          player1Name={player1Name}
-          player2Name={player2Name}
+          player1Name={p1Name}
+          player2Name={p2Name}
           spotifyToken={null}
           timerDuration={timerDuration}
           soundEnabled={soundEnabled}
@@ -205,9 +227,9 @@ export function GameApp() {
             const DIFFICULTY_TIMER: Record<string, number> = { easy: 40, medium: 35, hard: 30 };
             if (timerDuration > 0) setTimerDuration(DIFFICULTY_TIMER[d] ?? 40);
           }}
-          p1Token={p1Token}
-          p2Token={p2Token}
-          online={gameMode === "online" ? online : undefined}
+          p1Token={p1TokenEffective}
+          p2Token={p2TokenEffective}
+          transport={gameMode === "online" ? room.matchTransport ?? undefined : undefined}
           onP1TokenChange={handleP1TokenChange}
           onP2TokenChange={handleP2TokenChange}
         />

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Loader2, X, Copy, Check, Wifi, WifiOff, Clock, Activity, AlertTriangle, ChevronDown, Mail, MessageSquare, Link2, Gamepad2, QrCode, Smartphone } from "lucide-react";
 import { ArrowRightIcon, type ArrowRightIconHandle } from "../../imports/arrow-right-icon";
@@ -8,30 +8,24 @@ import { PencilIcon, type PencilIconHandle } from "../../imports/pencil-icon";
 import { FigmaLogo, GridDots, DiamondShape, CrossShape } from "./FigmaDecorations";
 import Make4Logo from "../../imports/Make4Logo";
 import { TokenCustomizer } from "./TokenCustomizer";
-import { type TokenConfig, DEFAULT_TOKEN_RED, DEFAULT_TOKEN_YELLOW, getTokenVisuals, getSlotToken, save as saveToken } from "./tokens";
-import type { UseOnlineGameReturn } from "./useOnlineGame";
+import { type TokenConfig, DEFAULT_TOKEN_RED, getTokenVisuals, getSlotToken, save as saveToken } from "./tokens";
+import { colorFor, type Role } from "./room";
+import type { UseRoomReturn } from "./useRoom";
 import type { SiteStats } from "./api";
 import { QRCodeSVG } from "qrcode.react";
 import { g } from "./ThemeContext";
 
 interface OnlineLobbyProps {
-  online: UseOnlineGameReturn;
+  /** The owning Room Module. The lobby renders its state and issues its commands. */
+  room: UseRoomReturn;
   initialRoomCode?: string | null;
   siteStats?: SiteStats | null;
-  onGameReady: (
-    p1Name: string,
-    p2Name: string,
-    timerDuration: number,
-    soundEnabled: boolean,
-    p1Token: TokenConfig,
-    p2Token: TokenConfig,
-  ) => void;
   onBack: () => void;
 }
 
-type LobbyView = "choose" | "create" | "join" | "waiting" | "ready";
+type LobbyView = "choose" | "join" | "waiting";
 
-export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, onBack }: OnlineLobbyProps) {
+export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: OnlineLobbyProps) {
   // If we have an initial room code from a shared link, start in "join" view
   const [view, setView] = useState<LobbyView>(initialRoomCode ? "join" : "choose");
   const [playerName, setPlayerName] = useState(() => {
@@ -39,7 +33,6 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
   });
   const [joinCode, setJoinCode] = useState(initialRoomCode || "");
   const [copied, setCopied] = useState(false);
-  const [soundOn, setSoundOn] = useState(true);
   const [playerToken, setPlayerToken] = useState<TokenConfig>(() => getSlotToken("p1") ?? DEFAULT_TOKEN_RED);
   const [customizingToken, setCustomizingToken] = useState(false);
   const [showHowToPlay, setShowHowToPlay] = useState(false);
@@ -47,55 +40,43 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
   const arrowRef = useRef<ArrowRightIconHandle>(null);
   const pencilRef = useRef<PencilIconHandle>(null);
 
-  // When opponent joins (for host), auto-transition to game
-  useEffect(() => {
-    if (online.connectionState === "connected" && online.opponentPresent && online.room) {
-      // Send our token config to the opponent
-      online.sendTokenSync(playerToken);
+  // ── Everything below is rendered from Room state ──
+  // No readiness effect, no startup delay, no Role-to-player assembly: the Room
+  // Module decides when a Ready Room exists and App starts the Match from it.
+  const state = room.state;
+  const phase = state.phase;
+  const roomRecord =
+    state.phase === "waiting" || state.phase === "synchronizing" ? state.room : null;
+  const roomError = state.phase === "failed" ? state.error.message : null;
+  const localRole: Role | null =
+    state.phase === "synchronizing"
+      ? state.role
+      : state.phase === "ready"
+        ? state.room.role
+        : null;
+  const localColor = localRole ? colorFor(localRole) : "red";
+  // A live Room (waiting for a guest, or synchronizing into a Ready Room) owns the view.
+  const effectiveView: LobbyView = roomRecord ? "waiting" : view;
 
-      // Small delay to let token sync happen
-      const timer = setTimeout(() => {
-        const isHost = online.role === "host";
-        const p1Name = isHost ? (playerName.trim() || "Player 1") : (online.room?.hostName || "Player 1");
-        const p2Name = isHost ? (online.room?.guestName || "Player 2") : (playerName.trim() || "Player 2");
-        const p1Token = isHost ? playerToken : (online.opponentToken || DEFAULT_TOKEN_RED);
-        const p2Token = isHost ? (online.opponentToken || DEFAULT_TOKEN_YELLOW) : playerToken;
-
-        localStorage.setItem("make4_p1Name", playerName.trim() || "Player 1");
-
-        onGameReady(
-          p1Name,
-          p2Name,
-          online.room?.timerDuration ?? 40,
-          soundOn,
-          p1Token,
-          p2Token,
-        );
-      }, 800);
-
-      return () => clearTimeout(timer);
-    }
-  }, [online.connectionState, online.opponentPresent]);
+  const rememberName = (name: string) => {
+    try { localStorage.setItem("make4_p1Name", name); } catch { /* ignore */ }
+  };
 
   const handleCreateRoom = async () => {
     const name = playerName.trim() || "Player 1";
-    const code = await online.createNewRoom(name, 40);
-    if (code) {
-      setView("waiting");
-    }
+    rememberName(name);
+    await room.create({ hostName: name, timerDuration: 40, token: playerToken });
   };
 
   const handleJoinRoom = async () => {
     const name = playerName.trim() || "Player 2";
-    const success = await online.joinExistingRoom(joinCode, name);
-    if (!success) {
-      // Error is set in the hook
-    }
+    rememberName(name);
+    await room.join({ code: joinCode, guestName: name, token: playerToken });
   };
 
   const copyLink = () => {
-    if (!online.room) return;
-    const link = `${window.location.origin}${window.location.pathname}?room=${online.room.code}`;
+    if (!roomRecord) return;
+    const link = `${window.location.origin}${window.location.pathname}?room=${roomRecord.code}`;
     navigator.clipboard.writeText(link).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -103,14 +84,14 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
   };
 
   const copyCode = () => {
-    if (!online.room) return;
-    navigator.clipboard.writeText(online.room.code).then(() => {
+    if (!roomRecord) return;
+    navigator.clipboard.writeText(roomRecord.code).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
   };
 
-  const tv = getTokenVisuals(playerToken, online.role === "guest" ? "yellow" : "red");
+  const tv = getTokenVisuals(playerToken, localColor);
 
   return (
     <div className="min-h-screen w-full flex flex-col items-center justify-center relative overflow-hidden py-6 sm:py-8 bg-g-bg">
@@ -171,7 +152,7 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
 
         {/* Back button */}
         <button
-          onClick={() => { online.disconnect(); onBack(); }}
+          onClick={() => { void room.leave(); onBack(); }}
           className="absolute top-0 left-6 cursor-pointer px-3 py-1.5 rounded-lg text-sm bg-g-surface border border-g-border text-g-text-muted"
         >
           Back
@@ -179,7 +160,7 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
 
         {/* ─── Choose: Create or Join ─── */}
         <AnimatePresence mode="wait">
-          {view === "choose" && (
+          {effectiveView === "choose" && (
             <motion.div
               key="choose"
               initial={{ opacity: 0, y: 10 }}
@@ -227,15 +208,15 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
                 whileHover={{ scale: 1.02, y: -1 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={handleCreateRoom}
-                disabled={online.connectionState === "creating"}
+                disabled={phase === "creating"}
                 className="w-full py-4 rounded-2xl cursor-pointer flex items-center justify-center gap-3 text-white text-base font-semibold border-none"
                 style={{
                   background: "linear-gradient(135deg, #1ABCFE, #0E9BD8)",
                   boxShadow: "0 4px 30px rgba(26,188,254,0.3)",
-                  opacity: online.connectionState === "creating" ? 0.7 : 1,
+                  opacity: phase === "creating" ? 0.7 : 1,
                 }}
               >
-                {online.connectionState === "creating" ? (
+                {phase === "creating" ? (
                   <Loader2 size={18} className="animate-spin" />
                 ) : (
                   <>
@@ -277,16 +258,16 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
                   onClick={handleJoinRoom}
                   onMouseEnter={() => arrowRef.current?.startAnimation()}
                   onMouseLeave={() => arrowRef.current?.stopAnimation()}
-                  disabled={joinCode.length < 4 || online.connectionState === "joining"}
+                  disabled={joinCode.length < 4 || phase === "joining"}
                   className="px-5 py-3 rounded-xl cursor-pointer flex items-center gap-2 text-base font-medium"
                   style={{
                     background: joinCode.length >= 4 ? g.surfaceHover : g.surfaceFaint,
                     border: joinCode.length >= 4 ? `1px solid ${g.borderHover}` : `1px solid ${g.borderLight}`,
                     color: joinCode.length >= 4 ? g.text : g.textDim,
-                    opacity: online.connectionState === "joining" ? 0.7 : 1,
+                    opacity: phase === "joining" ? 0.7 : 1,
                   }}
                 >
-                  {online.connectionState === "joining" ? (
+                  {phase === "joining" ? (
                     <Loader2 size={16} className="animate-spin" />
                   ) : (
                     <>
@@ -298,13 +279,13 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
               </div>
 
               {/* Error display */}
-              {online.error && (
+              {roomError && (
                 <motion.p
                   initial={{ opacity: 0, y: 4 }}
                   animate={{ opacity: 1, y: 0 }}
                   className="text-figma-red text-sm"
                 >
-                  {online.error}
+                  {roomError}
                 </motion.p>
               )}
 
@@ -421,7 +402,7 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
           )}
 
           {/* ─── Join via shared link ─── */}
-          {view === "join" && (
+          {effectiveView === "join" && (
             <motion.div
               key="join"
               initial={{ opacity: 0, y: 10 }}
@@ -486,15 +467,15 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
                 onClick={handleJoinRoom}
                 onMouseEnter={() => arrowRef.current?.startAnimation()}
                 onMouseLeave={() => arrowRef.current?.stopAnimation()}
-                disabled={online.connectionState === "joining"}
+                disabled={phase === "joining"}
                 className="w-full py-4 rounded-2xl cursor-pointer flex items-center justify-center gap-3 text-white text-base font-semibold border-none"
                 style={{
                   background: "linear-gradient(135deg, #0ACF83, #07A868)",
                   boxShadow: "0 4px 30px rgba(10,207,131,0.3)",
-                  opacity: online.connectionState === "joining" ? 0.7 : 1,
+                  opacity: phase === "joining" ? 0.7 : 1,
                 }}
               >
-                {online.connectionState === "joining" ? (
+                {phase === "joining" ? (
                   <Loader2 size={18} className="animate-spin" />
                 ) : (
                   <>
@@ -505,13 +486,13 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
               </motion.button>
 
               {/* Error display */}
-              {online.error && (
+              {roomError && (
                 <motion.p
                   initial={{ opacity: 0, y: 4 }}
                   animate={{ opacity: 1, y: 0 }}
                   className="text-figma-red text-sm"
                 >
-                  {online.error}
+                  {roomError}
                 </motion.p>
               )}
 
@@ -526,7 +507,7 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
           )}
 
           {/* ─── Waiting for opponent ─── */}
-          {view === "waiting" && online.room && (
+          {effectiveView === "waiting" && roomRecord && (
             <motion.div
               key="waiting"
               initial={{ opacity: 0, y: 10 }}
@@ -545,7 +526,7 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
                     className="tracking-[8px] select-all text-4xl font-bold text-figma-blue font-mono"
                     style={{ textShadow: "0 0 20px rgba(26,188,254,0.3)" }}
                   >
-                    {online.room.code}
+                    {roomRecord.code}
                   </span>
                 </div>
 
@@ -592,7 +573,7 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
                     }}
                   >
                     <QRCodeSVG
-                      value={`${window.location.origin}${window.location.pathname}?room=${online.room.code}`}
+                      value={`${window.location.origin}${window.location.pathname}?room=${roomRecord.code}`}
                       size={140}
                       level="M"
                       bgColor="white"
@@ -623,10 +604,14 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
                   <Loader2 size={24} className="text-figma-blue" />
                 </motion.div>
                 <p className="text-g-text-muted text-base">
-                  Waiting for opponent to join...
+                  {phase === "synchronizing"
+                    ? "Getting the board ready..."
+                    : "Waiting for opponent to join..."}
                 </p>
                 <p className="text-g-text-dim text-sm">
-                  Share the room code or link with your friend
+                  {phase === "synchronizing"
+                    ? "Both players are connecting to the room"
+                    : "Share the room code or link with your friend"}
                 </p>
               </div>
 
@@ -643,7 +628,7 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
               </div>
 
               {/* Connected indicator */}
-              {online.opponentPresent && (
+              {phase === "synchronizing" && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
@@ -651,14 +636,14 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
                 >
                   <div className="w-2 h-2 rounded-full bg-figma-green shadow-[0_0_8px_#0ACF83]" />
                   <span className="text-figma-green text-sm font-medium">
-                    Opponent connected! Starting game...
+                    Opponent connected! Starting match...
                   </span>
                 </motion.div>
               )}
 
               {/* Cancel button */}
               <button
-                onClick={() => { online.disconnect(); setView("choose"); }}
+                onClick={() => { void room.leave(); setView("choose"); }}
                 className="cursor-pointer px-4 py-2 rounded-lg text-sm bg-g-surface-faint border border-g-border-light text-g-text-faint"
               >
                 Cancel
@@ -752,13 +737,15 @@ export function OnlineLobby({ online, initialRoomCode, siteStats, onGameReady, o
       <TokenCustomizer
         isOpen={customizingToken}
         onClose={() => setCustomizingToken(false)}
-        playerColor={online.role === "guest" ? "yellow" : "red"}
+        playerColor={localColor}
         playerName={playerName.trim() || "Player 1"}
         currentConfig={playerToken}
         onSave={(config) => {
           setPlayerToken(config);
           // Lobby edits stay local-only (no server sync) to preserve prior behavior
           saveToken(playerName, config, { slot: "p1", toServer: false });
+          // Cosmetic, non-blocking: the Room broadcasts and reconciles it.
+          room.updateLocalToken(config);
         }}
       />
     </div>
