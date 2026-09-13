@@ -3,3 +3,7 @@ packages:
 
 overrides:
   vite: 8.3.0
+  # Transitive CSS deps of jsdom (via cssstyle). Pinned one release back: the
+  # newest ones fail the lockfile supply-chain minimum-release-age policy.
+  '@csstools/css-calc': 3.3.0
+  '@csstools/css-color-parser': 4.2.2
