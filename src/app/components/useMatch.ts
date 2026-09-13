@@ -7,7 +7,8 @@ import {
 import { findBestBlastTarget } from "./blast";
 import { getBestMove, getBestBlastMove, type Difficulty } from "./connect4AI";
 import type { GameMode } from "./StartScreen";
-import type { UseOnlineGameReturn } from "./useOnlineGame";
+import type { OnlineMatchTransport } from "./room";
+import { PROTOCOL_VERSION } from "./room";
 import {
   playDrop,
   playBlast,
@@ -19,6 +20,10 @@ import {
   playClick,
 } from "./useSoundEffects";
 
+function newMatchId(): string {
+  return `match-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 /**
  * useMatch — the deep move pipeline.
  *
@@ -29,7 +34,9 @@ import {
  *
  * Callers learn four verbs — `drop`, `blast`, `autoBlast`, `reset` — and never
  * re-derive turn checks or remember to broadcast. Online play is injected as the
- * `online` transport adapter; absence of it is local/bot play.
+ * narrow `transport` Adapter owned by the Room Module — the Match never sees Room
+ * creation, joining, Player Token, invitation, failure, or Supabase concerns.
+ * Absence of a transport is local/bot play.
  *
  * Invariants:
  *  - `drop`/`blast`/`autoBlast` are no-ops when it is not `isMyTurn` (online).
@@ -43,7 +50,8 @@ export interface UseMatchOptions {
   difficulty: Difficulty;
   timerDuration: number;
   soundEnabled: boolean;
-  online?: UseOnlineGameReturn;
+  /** The Room's Match seam. Stable for one Room generation. */
+  transport?: OnlineMatchTransport;
   onGameEnd: (winner: "red" | "yellow" | "draw") => void;
 }
 
@@ -91,7 +99,7 @@ export function useMatch({
   difficulty,
   timerDuration,
   soundEnabled,
-  online,
+  transport,
   onGameEnd,
 }: UseMatchOptions): UseMatchReturn {
   const game = useConnect4(timerDuration);
@@ -110,8 +118,13 @@ export function useMatch({
   const winnerOverlayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Online: which color this player controls + whose turn it is
-  const myColor = online?.role === "guest" ? "yellow" : "red";
+  const myColor = transport?.role === "guest" ? "yellow" : "red";
   const isMyTurn = gameMode !== "online" || game.currentPlayer === myColor;
+
+  // Online: the local action revision (incremented per applied action) and the
+  // current Match identity. Revision-gap repair lands with the Match Snapshot work.
+  const revisionRef = useRef(0);
+  const matchIdRef = useRef(newMatchId());
 
   // Online: register a move handler that fires immediately on broadcast.
   // Refs keep the handler pointed at the freshest game callbacks.
@@ -123,15 +136,19 @@ export function useMatch({
   resetGameRef.current = game.resetGame;
 
   useEffect(() => {
-    if (!online) return;
-    online.setMoveHandler((msg) => {
+    if (!transport) return;
+    return transport.subscribe((msg) => {
       if (msg.type === "drop") {
+        revisionRef.current = msg.revision;
         dropPieceRef.current(msg.col);
         if (soundEnabled) playDrop();
       } else if (msg.type === "blast") {
+        revisionRef.current = msg.revision;
         blastPieceRef.current(msg.row, msg.col);
         if (soundEnabled) playBlast();
       } else if (msg.type === "rematch") {
+        matchIdRef.current = msg.matchId;
+        revisionRef.current = 0;
         const starter = lastWinnerColor.current || undefined;
         resetGameRef.current(starter);
         setBlastMode(false);
@@ -145,8 +162,7 @@ export function useMatch({
         if (soundEnabled) playReset();
       }
     });
-    return () => online.setMoveHandler(null);
-  }, [online, soundEnabled]);
+  }, [transport, soundEnabled]);
 
   // Pause the game clock during the countdown
   useEffect(() => {
@@ -259,14 +275,31 @@ export function useMatch({
   const drop = useCallback((col: number) => {
     if (gameMode === "online" && !isMyTurn) return;
     game.dropPiece(col);
-    if (online) online.sendMove(col);
-  }, [game.dropPiece, gameMode, isMyTurn, online]);
+    if (transport) {
+      revisionRef.current += 1;
+      void transport.send({
+        protocolVersion: PROTOCOL_VERSION,
+        type: "drop",
+        revision: revisionRef.current,
+        col,
+      });
+    }
+  }, [game.dropPiece, gameMode, isMyTurn, transport]);
 
   const blast = useCallback((row: number, col: number) => {
     if (gameMode === "online" && !isMyTurn) return;
     game.blastPiece(row, col);
-    if (online) online.sendBlast(row, col);
-  }, [game.blastPiece, gameMode, isMyTurn, online]);
+    if (transport) {
+      revisionRef.current += 1;
+      void transport.send({
+        protocolVersion: PROTOCOL_VERSION,
+        type: "blast",
+        revision: revisionRef.current,
+        row,
+        col,
+      });
+    }
+  }, [game.blastPiece, gameMode, isMyTurn, transport]);
 
   // Find the best target and blast it in one action (camera fist gesture)
   const autoBlast = useCallback(() => {
@@ -276,9 +309,18 @@ export function useMatch({
     const bestPos = findBestBlastTarget(game.board, game.currentPlayer);
     if (bestPos) {
       game.blastPiece(bestPos[0], bestPos[1]);
-      if (online) online.sendBlast(bestPos[0], bestPos[1]);
+      if (transport) {
+        revisionRef.current += 1;
+        void transport.send({
+          protocolVersion: PROTOCOL_VERSION,
+          type: "blast",
+          revision: revisionRef.current,
+          row: bestPos[0],
+          col: bestPos[1],
+        });
+      }
     }
-  }, [game.winner, game.hasBlastToken, game.board, game.currentPlayer, game.blastPiece, gameMode, isMyTurn, online]);
+  }, [game.winner, game.hasBlastToken, game.board, game.currentPlayer, game.blastPiece, gameMode, isMyTurn, transport]);
 
   const reset = useCallback(() => {
     const starter = lastWinnerColor.current || undefined;
@@ -291,8 +333,17 @@ export function useMatch({
     }
     setCountdown(4);
     if (soundEnabled) playReset();
-    if (online) online.sendRematch();
-  }, [game.resetGame, soundEnabled, online]);
+    if (transport) {
+      // A rematch is a fresh Match identity with its revision reset.
+      matchIdRef.current = newMatchId();
+      revisionRef.current = 0;
+      void transport.send({
+        protocolVersion: PROTOCOL_VERSION,
+        type: "rematch",
+        matchId: matchIdRef.current,
+      });
+    }
+  }, [game.resetGame, soundEnabled, transport]);
 
   const countdownLabel = countdown > 0
     ? countdown === 1 ? "GO!" : `${countdown - 1}`

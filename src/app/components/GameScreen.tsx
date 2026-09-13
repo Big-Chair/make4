@@ -12,7 +12,7 @@ import type { HandTrackingState } from "./useHandTracking";
 import { LeaderboardDrawer } from "./LeaderboardDrawer";
 import { TokenCustomizer } from "./TokenCustomizer";
 import { type TokenConfig, DEFAULT_PALETTE } from "./tokens";
-import type { UseOnlineGameReturn } from "./useOnlineGame";
+import type { OnlineMatchTransport } from "./room";
 import { useMatch } from "./useMatch";
 import { setSfxVolume } from "./useSoundEffects";
 import { useIsMobile } from "./useIsMobile";
@@ -49,17 +49,18 @@ interface GameScreenProps {
   onDifficultyChange?: (d: Difficulty) => void;
   p1Token?: TokenConfig;
   p2Token?: TokenConfig;
-  online?: UseOnlineGameReturn;
+  /** The Room's Match seam when this Match is online. */
+  transport?: OnlineMatchTransport;
   onP1TokenChange?: (config: TokenConfig) => void;
   onP2TokenChange?: (config: TokenConfig) => void;
 }
 
-export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, player1Name, player2Name, spotifyToken, timerDuration, soundEnabled, onSoundToggle, onDifficultyChange, p1Token, p2Token, online, onP1TokenChange, onP2TokenChange }: GameScreenProps) {
+export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, player1Name, player2Name, spotifyToken, timerDuration, soundEnabled, onSoundToggle, onDifficultyChange, p1Token, p2Token, transport, onP1TokenChange, onP2TokenChange }: GameScreenProps) {
   const isMobile = useIsMobile();
 
   // The deep move pipeline: board state, turn legality, AI, online sync, countdown,
   // winner recording — all behind four verbs (drop / blast / autoBlast / reset).
-  const match = useMatch({ gameMode, difficulty, timerDuration, soundEnabled, online, onGameEnd });
+  const match = useMatch({ gameMode, difficulty, timerDuration, soundEnabled, transport, onGameEnd });
 
   // Hand tracking state — synced from the lazy-loaded DesktopHandTracking child on desktop,
   // or stays as the no-op stub on mobile.

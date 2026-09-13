@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
@@ -28,7 +29,16 @@ export default defineConfig({
     alias: {
       // Alias @ to the src directory
       '@': path.resolve(__dirname, './src'),
+      // Root-absolute Figma import used by supabaseClient — resolved explicitly so
+      // it works under Vitest's node resolution as well as the dev server.
+      '/utils/supabase/info': path.resolve(__dirname, './utils/supabase/info.tsx'),
     },
+  },
+
+  test: {
+    environment: 'jsdom',
+    include: ['src/**/*.test.{ts,tsx}'],
+    restoreMocks: true,
   },
 
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
