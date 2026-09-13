@@ -44,10 +44,13 @@ export function GameApp() {
   // The owning Room Module. An online Match starts from a Ready Room and nothing else.
   const room = useRoom();
   const readyRoom = room.state.phase === "ready" ? room.state.room : null;
-  // What the Match renders: the Ready Room, or the last one if the Room failed —
-  // a failure must not blank out the players mid-Match.
+  // What the Match renders: the Ready Room (also while interrupted for
+  // resynchronization), or the last one if the Room failed — neither may blank
+  // out the players mid-Match.
+  const liveRoom =
+    room.state.phase === "ready" || room.state.phase === "interrupted" ? room.state.room : null;
   const activeRoom =
-    readyRoom ?? (room.state.phase === "failed" ? room.state.previousRoom ?? null : null);
+    liveRoom ?? (room.state.phase === "failed" ? room.state.previousRoom ?? null : null);
 
   // Start the online Match the moment a Ready Room exists — no fixed delay, no
   // Role-to-player assembly in the lobby.
@@ -159,7 +162,8 @@ export function GameApp() {
     }));
 
     // Only the host persists an online Match result; both peers keep local score.
-    const hostPersists = gameMode !== "online" || readyRoom?.role === "host";
+    // A failed Room is not live, so it never persists a result.
+    const hostPersists = gameMode !== "online" || liveRoom?.role === "host";
 
     // Persist to leaderboard if playing with a timer (any duration counts)
     if (timerDuration > 0 && hostPersists) {
@@ -173,14 +177,14 @@ export function GameApp() {
   const handleP1TokenChange = useCallback((config: TokenConfig) => {
     setP1Token(config);
     if (p1Name) saveToken(p1Name, config);
-    if (readyRoom?.role === "host") room.updateLocalToken(config);
-  }, [p1Name, readyRoom, room]);
+    if (activeRoom?.role === "host") room.updateLocalToken(config);
+  }, [p1Name, activeRoom, room]);
 
   const handleP2TokenChange = useCallback((config: TokenConfig) => {
     setP2Token(config);
     if (p2Name) saveToken(p2Name, config);
-    if (readyRoom?.role === "guest") room.updateLocalToken(config);
-  }, [p2Name, readyRoom, room]);
+    if (activeRoom?.role === "guest") room.updateLocalToken(config);
+  }, [p2Name, activeRoom, room]);
 
   return (
     <ThemeProvider>

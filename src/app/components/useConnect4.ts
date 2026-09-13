@@ -4,8 +4,8 @@ import { applyBlast } from "./blast";
 export type CellValue = null | "red" | "yellow";
 export type Board = CellValue[][];
 
-const ROWS = 6;
-const COLS = 7;
+export const ROWS = 6;
+export const COLS = 7;
 
 function createEmptyBoard(): Board {
   return Array.from({ length: ROWS }, () => Array(COLS).fill(null));
@@ -248,6 +248,30 @@ export function useConnect4(timerDuration: number = 40) {
     setPaused(false);
   }, [timerDuration]);
 
+  /**
+   * Replace the whole game state in one batch, so a render never sees half of a
+   * restored Match. Internal to the Match — not for render Modules.
+   */
+  const restore = useCallback((state: {
+    board: Board;
+    currentPlayer: "red" | "yellow";
+    winner: CellValue | "draw";
+    winningCells: number[][] | null;
+    redBlastToken: boolean;
+    yellowBlastToken: boolean;
+    timer: number;
+  }) => {
+    setBoard(state.board.map((row) => [...row]));
+    setCurrentPlayer(state.currentPlayer);
+    setWinner(state.winner);
+    setWinningCells(state.winningCells);
+    setRedBlastToken(state.redBlastToken);
+    setYellowBlastToken(state.yellowBlastToken);
+    setTimer(state.timer);
+    // Blasts also count as moves, so this is a lower bound; nothing reads it for rules.
+    setMoveCount(state.board.flat().filter((cell) => cell !== null).length);
+  }, []);
+
   return {
     board,
     currentPlayer,
@@ -256,6 +280,7 @@ export function useConnect4(timerDuration: number = 40) {
     dropPiece,
     blastPiece,
     resetGame,
+    restore,
     hasBlastToken,
     redBlastToken,
     yellowBlastToken,
