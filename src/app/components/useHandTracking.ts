@@ -18,8 +18,8 @@ export interface HandTrackingState {
   blastCursor: [number, number] | null;
   /** Confidence in current gesture 0-1 */
   confidence: number;
-  videoRef: React.RefObject<HTMLVideoElement | null>;
-  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  videoRef: React.RefObject<HTMLVideoElement>;
+  canvasRef: React.RefObject<HTMLCanvasElement>;
   landmarks: number[][] | null;
   start: () => void;
   stop: () => void;
@@ -127,8 +127,8 @@ export function useHandTracking(): HandTrackingState {
   const [confidence, setConfidence] = useState(0);
   const [landmarks, setLandmarks] = useState<number[][] | null>(null);
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const handLandmarkerRef = useRef<any>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number>(0);

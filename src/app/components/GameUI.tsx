@@ -537,7 +537,7 @@ interface WinnerOverlayProps {
   score?: { red: number; yellow: number; draws: number };
   p1Label?: string;
   p2Label?: string;
-  gameMode?: "local" | "bot";
+  gameMode?: "local" | "bot" | "online";
   difficulty?: "easy" | "medium" | "hard";
   onDifficultyChange?: (d: "easy" | "medium" | "hard") => void;
 }

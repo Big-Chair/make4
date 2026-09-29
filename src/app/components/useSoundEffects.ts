@@ -13,11 +13,6 @@ export function setSfxVolume(vol: number) {
   masterVolume = Math.max(0, Math.min(1, vol / 100));
 }
 
-/** Get current SFX volume (0–100 scale) */
-export function getSfxVolume(): number {
-  return Math.round(masterVolume * 100);
-}
-
 function getCtx(): AudioContext {
   if (!audioCtx) {
     audioCtx = new AudioContext();

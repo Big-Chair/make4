@@ -114,14 +114,6 @@ export async function fetchLeaderboard(
   };
 }
 
-export async function fetchPlayer(name: string): Promise<Result<PlayerStats | null>> {
-  const res = await request<{ player?: PlayerStats }>(
-    `/player/${encodeURIComponent(name.toLowerCase().trim())}`
-  );
-  if (!res.ok) return res;
-  return { ok: true, data: res.data.player || null };
-}
-
 // Upload a custom token image
 export async function uploadTokenImage(
   playerName: string,

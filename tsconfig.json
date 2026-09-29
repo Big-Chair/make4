@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "/utils/supabase/info": ["utils/supabase/info.tsx"]
+    }
+  },
+  "include": ["src", "utils"],
+  // src/app/components/ui is the shadcn kit that shipped with the Figma export. Only
+  // ui/utils (cn) is imported, and imported files are still checked. The rest is unused
+  // and fails against the current recharts / react-day-picker / react-resizable-panels
+  // versions, so it is kept out of the root file set. Drop this when the kit gets used.
+  "exclude": ["src/app/components/ui"]
+}

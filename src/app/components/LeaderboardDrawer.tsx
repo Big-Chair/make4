@@ -253,7 +253,7 @@ export function LeaderboardDrawer({ isOpen, onClose, currentPlayerName }: Leader
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.9 }}
-                  onClick={loadLeaderboard}
+                  onClick={() => loadLeaderboard(activeLevel)}
                   disabled={loading}
                   className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer"
                   style={{

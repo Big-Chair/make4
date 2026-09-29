@@ -19,7 +19,7 @@ export interface Scoreboard {
 }
 
 export default function App() {
-  return <RouterProvider router={router} future={{ v7_startTransition: true }} />;
+  return <RouterProvider router={router} />;
 }
 
 export function GameApp() {
@@ -228,7 +228,6 @@ export function GameApp() {
           onGameEnd={handleGameEnd}
           player1Name={p1Name}
           player2Name={p2Name}
-          spotifyToken={null}
           timerDuration={timerDuration}
           soundEnabled={soundEnabled}
           onSoundToggle={() => setSoundEnabled((s) => !s)}

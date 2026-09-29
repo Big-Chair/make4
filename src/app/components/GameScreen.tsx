@@ -18,7 +18,6 @@ import { useMatch } from "./useMatch";
 import { setSfxVolume } from "./useSoundEffects";
 import { useIsMobile } from "./useIsMobile";
 import { g } from "./ThemeContext";
-import { useSpotifySDK } from "./useSpotifySDK";
 
 // ─── Lazy-load desktop-only hand-tracking + camera control ───
 // HMR cache-bust
@@ -28,9 +27,15 @@ const NOOP_HAND_TRACKING: HandTrackingState = {
   isTracking: false,
   isLoading: false,
   error: null,
-  selectedCol: null,
+  gesture: "none",
+  handX: 0.5,
+  handY: 0.5,
+  selectedCol: 3,
   blastCursor: null,
-  gesture: undefined,
+  confidence: 0,
+  videoRef: { current: null },
+  canvasRef: { current: null },
+  landmarks: null,
   start: () => {},
   stop: () => {},
 };
@@ -43,7 +48,6 @@ interface GameScreenProps {
   onGameEnd: (winner: "red" | "yellow" | "draw") => void;
   player1Name: string;
   player2Name: string;
-  spotifyToken: string | null;
   timerDuration: number;
   soundEnabled: boolean;
   onSoundToggle: () => void;
@@ -58,7 +62,7 @@ interface GameScreenProps {
   onP2TokenChange?: (config: TokenConfig) => void;
 }
 
-export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, player1Name, player2Name, spotifyToken, timerDuration, soundEnabled, onSoundToggle, onDifficultyChange, p1Token, p2Token, transport, roomNotice = null, onP1TokenChange, onP2TokenChange }: GameScreenProps) {
+export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, player1Name, player2Name, timerDuration, soundEnabled, onSoundToggle, onDifficultyChange, p1Token, p2Token, transport, roomNotice = null, onP1TokenChange, onP2TokenChange }: GameScreenProps) {
   const isMobile = useIsMobile();
 
   // The deep move pipeline: board state, turn legality, AI, online sync, countdown,
@@ -87,19 +91,6 @@ export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, pla
   useEffect(() => {
     setSfxVolume(sfxVolume);
   }, []);
-
-  // Spotify volume state (persisted to localStorage)
-  const [spotifyVolume, setSpotifyVolume] = useState(() => {
-    const saved = localStorage.getItem("make4-spotify-volume");
-    return saved ? parseInt(saved) : 80;
-  });
-  const handleVolumeChange = (v: number) => {
-    setSpotifyVolume(v);
-    localStorage.setItem("make4-spotify-volume", String(v));
-  };
-
-  // Spotify Web Playback SDK — only on desktop with a token
-  const spotifySDK = useSpotifySDK(isMobile ? null : spotifyToken, spotifyVolume);
 
   // Token customizer state
   const [tokenEditPlayer, setTokenEditPlayer] = useState<"red" | "yellow" | null>(null);
@@ -315,17 +306,7 @@ export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, pla
                           initial={{ scale: 0.3, opacity: 0 }}
                           animate={{ scale: 1, opacity: 1 }}
                           exit={{ scale: 2, opacity: 0 }}
-                          transition={{
-                            enter: {
-                              type: "spring",
-                              damping: 12,
-                              stiffness: 200,
-                            },
-                            exit: {
-                              duration: 0.35,
-                              ease: "easeOut",
-                            },
-                          }}
+                          transition={{ type: "spring", damping: 12, stiffness: 200 }}
                           className="flex flex-col items-center justify-center"
                         >
                           <motion.span
@@ -553,12 +534,7 @@ export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, pla
 
       {/* Spotify Player — hidden on mobile for performance */}
       {!isMobile && (
-        <SpotifyPlayer
-          spotifyToken={spotifyToken}
-          sdk={spotifySDK}
-          volume={spotifyVolume}
-          onVolumeChange={handleVolumeChange}
-        />
+        <SpotifyPlayer />
       )}
 
       {/* Desktop hand-tracking + camera control — lazy-loaded so mobile never
