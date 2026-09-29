@@ -19,7 +19,7 @@ import type {
   RoomApiResult,
   RoomChannel,
   RoomPresence,
-  MatchWireMessage,
+  RoomMessage,
 } from "./room";
 import type { Result } from "./api";
 
@@ -91,7 +91,7 @@ export const supabaseRoomAdapter: RoomAdapter = {
         if (closed) return;
         await channel.track(payload);
       },
-      async send(message: MatchWireMessage) {
+      async send(message: RoomMessage) {
         if (closed) return;
         await channel.send({ type: "broadcast", event: ROOM_EVENT, payload: message });
       },

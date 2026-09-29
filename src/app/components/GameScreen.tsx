@@ -150,6 +150,7 @@ export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, pla
       <div className="relative z-20 flex-shrink-0">
         <TopBar
           onReset={match.reset}
+          resetDisabled={!match.canReset}
           onClose={onExit}
           timer={match.timer}
           timerDuration={match.timerDuration}

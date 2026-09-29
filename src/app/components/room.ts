@@ -14,8 +14,12 @@
  *    names, timer, and Blast-token configuration. Presence proves liveness only.
  *  - Every payload crossing the wire carries `protocolVersion: 1` and is decoded
  *    here. Application state never receives a cast of an arbitrary payload.
+ *    Match messages are the exception that proves it: the Room checks their
+ *    envelope and hands the payload to the Match, whose sync module
+ *    (`matchSync.ts`) owns and decodes that vocabulary.
  */
 import type { Room as RoomRecord } from "./api";
+import type { MatchMessage } from "./matchSync";
 import { defaultTokenFor, type TokenConfig } from "./tokens";
 
 export type { RoomRecord };
@@ -110,19 +114,19 @@ export interface DecodedRoomPresence extends Omit<RoomPresence, "token"> {
   token: TokenConfig | null;
 }
 
-/** Broadcast messages. `token-sync` is Room state and is never forwarded to the
- *  Match; the rest cross the Match transport.
- *
- *  A `snapshot` payload is opaque to the Room: the Match owns its contents and
- *  decodes it (`matchSnapshot.ts`), so the Room never interprets Board state. */
-export type MatchWireMessage =
-  | { protocolVersion: typeof PROTOCOL_VERSION; type: "drop"; revision: number; col: number }
-  | { protocolVersion: typeof PROTOCOL_VERSION; type: "blast"; revision: number; row: number; col: number }
-  | { protocolVersion: typeof PROTOCOL_VERSION; type: "rematch"; matchId: string }
-  | { protocolVersion: typeof PROTOCOL_VERSION; type: "token-sync"; token: TokenConfig }
-  | { protocolVersion: typeof PROTOCOL_VERSION; type: "snapshot-request"; requestId: string }
-  | { protocolVersion: typeof PROTOCOL_VERSION; type: "snapshot"; requestId: string; snapshot: unknown }
-  | { protocolVersion: typeof PROTOCOL_VERSION; type: "snapshot-applied"; requestId: string; revision: number };
+/** The Room's own Broadcast: a peer's Player Token changed. Never forwarded to the Match. */
+export interface TokenSyncMessage {
+  protocolVersion: typeof PROTOCOL_VERSION;
+  type: "token-sync";
+  token: TokenConfig;
+}
+
+/** Everything on the Room's Broadcast channel: `token-sync`, or a Match message
+ *  the Room carries without interpreting it. */
+export type RoomMessage = TokenSyncMessage | MatchMessage;
+
+/** A Broadcast as the Room decodes it: its own message, or an opaque Match payload. */
+export type DecodedRoomMessage = TokenSyncMessage | { type: "match"; payload: unknown };
 
 /** The single Room seam visible to the Match. Its identity is stable for one
  *  Room generation, so the Match never re-subscribes mid-Match; `status` is read
@@ -131,8 +135,9 @@ export interface OnlineMatchTransport {
   role: Role;
   /** Match input and its timer run only while this is `ready`. */
   readonly status: "ready" | "interrupted" | "resynchronizing";
-  send(message: MatchWireMessage): Promise<void>;
-  subscribe(handler: (message: MatchWireMessage) => void): () => void;
+  send(message: MatchMessage): Promise<void>;
+  /** Receives each Match payload undecoded; the Match decodes its own messages. */
+  subscribe(handler: (payload: unknown) => void): () => void;
   /** The Match saw its Board may have diverged: pause and start resynchronizing.
    *  The Room owns the deadline by which `resume` must follow. No-op unless ready. */
   interrupt(reason: InterruptReason): void;
@@ -201,58 +206,13 @@ export function decodeRoomPresence(value: unknown): DecodedRoomPresence | null {
   };
 }
 
-export function decodeMatchWireMessage(value: unknown): MatchWireMessage | null {
+export function decodeRoomMessage(value: unknown): DecodedRoomMessage | null {
   if (!isRecord(value)) return null;
-  if (value.protocolVersion !== PROTOCOL_VERSION) return null;
-  switch (value.type) {
-    case "drop":
-      if (typeof value.revision !== "number" || typeof value.col !== "number") return null;
-      return { protocolVersion: PROTOCOL_VERSION, type: "drop", revision: value.revision, col: value.col };
-    case "blast":
-      if (
-        typeof value.revision !== "number" ||
-        typeof value.row !== "number" ||
-        typeof value.col !== "number"
-      ) {
-        return null;
-      }
-      return {
-        protocolVersion: PROTOCOL_VERSION,
-        type: "blast",
-        revision: value.revision,
-        row: value.row,
-        col: value.col,
-      };
-    case "rematch":
-      if (typeof value.matchId !== "string") return null;
-      return { protocolVersion: PROTOCOL_VERSION, type: "rematch", matchId: value.matchId };
-    case "token-sync": {
-      const token = decodeTokenConfig(value.token);
-      if (!token) return null;
-      return { protocolVersion: PROTOCOL_VERSION, type: "token-sync", token };
-    }
-    case "snapshot-request":
-      if (typeof value.requestId !== "string") return null;
-      return { protocolVersion: PROTOCOL_VERSION, type: "snapshot-request", requestId: value.requestId };
-    case "snapshot":
-      if (typeof value.requestId !== "string" || !("snapshot" in value)) return null;
-      return {
-        protocolVersion: PROTOCOL_VERSION,
-        type: "snapshot",
-        requestId: value.requestId,
-        snapshot: value.snapshot,
-      };
-    case "snapshot-applied":
-      if (typeof value.requestId !== "string" || typeof value.revision !== "number") return null;
-      return {
-        protocolVersion: PROTOCOL_VERSION,
-        type: "snapshot-applied",
-        requestId: value.requestId,
-        revision: value.revision,
-      };
-    default:
-      return null;
-  }
+  if (value.protocolVersion !== PROTOCOL_VERSION || typeof value.type !== "string") return null;
+  if (value.type !== "token-sync") return { type: "match", payload: value };
+  const token = decodeTokenConfig(value.token);
+  if (!token) return null;
+  return { protocolVersion: PROTOCOL_VERSION, type: "token-sync", token };
 }
 
 // ─── Projection ───
@@ -286,8 +246,8 @@ export type ChannelStatus = "subscribed" | "closed" | "error";
 export interface RoomChannel {
   /** Publish this client's Presence payload. Called only after `subscribed`. */
   track(payload: RoomPresence): Promise<void>;
-  /** Broadcast a Match/Room message to the peer. */
-  send(message: MatchWireMessage): Promise<void>;
+  /** Broadcast a Room or Match message to the peer. */
+  send(message: RoomMessage): Promise<void>;
   /** Release the channel. Idempotent. */
   close(): Promise<void>;
 }

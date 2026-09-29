@@ -268,6 +268,8 @@ export function TimerDisplay({ timer, timerDuration, currentPlayer, timerEnabled
 
 interface TopBarProps {
   onReset: () => void;
+  /** Reset is refused right now — online, until the Match is decided. */
+  resetDisabled?: boolean;
   onClose: () => void;
   timer: number;
   timerDuration: number;
@@ -288,7 +290,7 @@ interface TopBarProps {
   onSfxVolumeChange?: (v: number) => void;
 }
 
-export function TopBar({ onReset, onClose, timer, timerDuration, timerEnabled, currentPlayer, blastMode, hasBlastToken, onToggleBlast, soundEnabled, onSoundToggle, cameraTracking, cameraLoading, cameraError, onCameraToggle, onLeaderboardToggle, leaderboardOpen, sfxVolume = 80, onSfxVolumeChange }: TopBarProps) {
+export function TopBar({ onReset, resetDisabled = false, onClose, timer, timerDuration, timerEnabled, currentPlayer, blastMode, hasBlastToken, onToggleBlast, soundEnabled, onSoundToggle, cameraTracking, cameraLoading, cameraError, onCameraToggle, onLeaderboardToggle, leaderboardOpen, sfxVolume = 80, onSfxVolumeChange }: TopBarProps) {
   // Refs for animated icons (so parent button hover triggers the animation)
   const soundWaveRef = useRef<SpeakerWaveIconHandle>(null);
   const soundXRef = useRef<SpeakerXMarkIconHandle>(null);
@@ -462,7 +464,8 @@ export function TopBar({ onReset, onClose, timer, timerDuration, timerEnabled, c
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.9 }}
           onClick={onReset}
-          className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center cursor-pointer icon-btn"
+          disabled={resetDisabled}
+          className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center cursor-pointer icon-btn disabled:cursor-not-allowed disabled:opacity-40"
         >
           <RotateCcw size={15} className="sm:hidden" color={g.textMuted} />
           <RotateCcw size={18} className="hidden sm:block" color={g.textMuted} />

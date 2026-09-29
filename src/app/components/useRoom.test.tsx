@@ -10,7 +10,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   PROTOCOL_VERSION,
-  type MatchWireMessage,
+  type RoomMessage,
   type OpenChannelInput,
   type RoomAdapter,
   type RoomApiResult,
@@ -26,7 +26,7 @@ import { useRoom } from "./useRoom";
 
 class FakeChannel implements RoomChannel {
   tracked: RoomPresence[] = [];
-  sent: MatchWireMessage[] = [];
+  sent: RoomMessage[] = [];
   closeCount = 0;
 
   constructor(readonly input: OpenChannelInput) {}
@@ -35,7 +35,7 @@ class FakeChannel implements RoomChannel {
     this.tracked.push(payload);
     return Promise.resolve();
   }
-  send(message: MatchWireMessage) {
+  send(message: RoomMessage) {
     this.sent.push(message);
     return Promise.resolve();
   }
@@ -345,7 +345,7 @@ describe("player tokens", () => {
     expect(result.current.state.phase).toBe("ready");
 
     act(() =>
-      channel().message({ protocolVersion: 1, type: "token-sync", token: RED } satisfies MatchWireMessage),
+      channel().message({ protocolVersion: 1, type: "token-sync", token: RED } satisfies RoomMessage),
     );
 
     const room = result.current.state.phase === "ready" ? result.current.state.room : null;
@@ -375,7 +375,7 @@ describe("player tokens", () => {
     act(() => channel().subscribed());
     act(() => channel().presence([presence("host"), presence("guest", { token: BLUE })]));
 
-    const received: MatchWireMessage[] = [];
+    const received: unknown[] = [];
     act(() => {
       result.current.matchTransport?.subscribe((message) => received.push(message));
     });
@@ -466,17 +466,20 @@ describe("failures", () => {
     expect(result.current.state.phase).toBe("synchronizing");
 
     act(() => channel().presence([presence("host"), presence("guest", { token: BLUE })]));
-    const received: MatchWireMessage[] = [];
+    const received: unknown[] = [];
     act(() => {
       result.current.matchTransport?.subscribe((message) => received.push(message));
     });
 
     act(() => channel().message({ type: "drop", col: 3 })); // no protocolVersion
     act(() => channel().message({ protocolVersion: 2, type: "drop", revision: 1, col: 3 }));
-    act(() => channel().message({ protocolVersion: 1, type: "teleport", col: 3 }));
-    act(() => channel().message({ protocolVersion: 1, type: "drop", col: "3" }));
+    act(() => channel().message({ protocolVersion: 1, col: 3 })); // no type
+    act(() => channel().message({ protocolVersion: 1, type: "token-sync", token: "junk" }));
+    act(() => channel().message("nonsense"));
     expect(received).toHaveLength(0);
 
+    // A Match message's body is the Match's to decode (`matchSync.ts`): the Room
+    // checks the envelope and forwards the payload as is.
     act(() => channel().message({ protocolVersion: 1, type: "drop", revision: 1, col: 3 }));
     expect(received).toEqual([{ protocolVersion: 1, type: "drop", revision: 1, col: 3 }]);
   });
@@ -497,7 +500,7 @@ describe("cleanup", () => {
     });
     act(() => opened.presence([presence("host"), presence("guest")]));
 
-    const received: MatchWireMessage[] = [];
+    const received: unknown[] = [];
     act(() => {
       result.current.matchTransport?.subscribe((message) => received.push(message));
     });
