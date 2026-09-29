@@ -38,11 +38,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   PROTOCOL_VERSION,
   colorFor,
-  decodeMatchWireMessage,
+  decodeRoomMessage,
   decodeRoomPresence,
   projectReadyRoom,
   type InterruptReason,
-  type MatchWireMessage,
   type OnlineMatchTransport,
   type ReadyRoom,
   type Role,
@@ -142,7 +141,7 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
 
   const channelRef = useRef<RoomChannel | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const handlersRef = useRef(new Set<(message: MatchWireMessage) => void>());
+  const handlersRef = useRef(new Set<(payload: unknown) => void>());
   const transportRef = useRef<OnlineMatchTransport | null>(null);
   /** Bumped per Room generation; async work from an older generation is dropped. */
   const generationRef = useRef(0);
@@ -360,7 +359,7 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
         },
         onMessage: (payload) => {
           if (generationRef.current !== generation) return;
-          const message = decodeMatchWireMessage(payload);
+          const message = decodeRoomMessage(payload);
           if (!message) {
             console.warn("[Room] Ignoring malformed room message:", payload);
             return;
@@ -370,7 +369,8 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
             update(generation, { peerToken: message.token });
             return;
           }
-          for (const handler of handlersRef.current) handler(message);
+          // The Match decodes its own messages (`matchSync.ts`).
+          for (const handler of handlersRef.current) handler(message.payload);
         },
       });
 

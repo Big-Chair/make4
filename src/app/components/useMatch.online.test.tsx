@@ -4,15 +4,20 @@
  *
  * The network can hold, drop, duplicate, or reorder Broadcast messages, which is
  * how a revision gap is produced. Nothing here touches Supabase or renders UI.
+ *
+ * The protocol itself — revisions, envelopes, the Snapshot handshake, rematch
+ * legality — is pinned without React in `matchSync.test.ts`. These tests prove
+ * it holds end to end through the real Room Module and Match hook.
  */
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { OPENING_MATCH_ID } from "./matchSync";
 import {
   PROTOCOL_VERSION,
-  type MatchWireMessage,
   type OpenChannelInput,
   type RoomAdapter,
   type RoomChannel,
+  type RoomMessage,
   type RoomPresence,
   type RoomRecord,
 } from "./room";
@@ -28,11 +33,11 @@ class FakeNetwork {
   channels: FakeChannel[] = [];
   queue: Envelope[] = [];
   /** Messages matching this predicate are lost in transit. */
-  lose: ((message: MatchWireMessage) => boolean) | null = null;
+  lose: ((message: RoomMessage) => boolean) | null = null;
   /** Channels cut off from the network: everything to or from them is lost. */
   down = new Set<FakeChannel>();
 
-  transmit(from: FakeChannel, message: MatchWireMessage) {
+  transmit(from: FakeChannel, message: RoomMessage) {
     const to = this.channels.find((channel) => channel !== from);
     if (!to) return;
     if (this.down.has(from) || this.down.has(to)) return;
@@ -52,7 +57,7 @@ class FakeNetwork {
 }
 
 class FakeChannel implements RoomChannel {
-  sent: MatchWireMessage[] = [];
+  sent: RoomMessage[] = [];
 
   constructor(
     readonly input: OpenChannelInput,
@@ -64,7 +69,7 @@ class FakeChannel implements RoomChannel {
   track(_payload: RoomPresence) {
     return Promise.resolve();
   }
-  send(message: MatchWireMessage) {
+  send(message: RoomMessage) {
     this.sent.push(message);
     this.network.transmit(this, message);
     return Promise.resolve();
@@ -272,26 +277,6 @@ describe("rejected local actions", () => {
     expect(guest.room.matchTransport?.status).toBe("ready");
   });
 
-  it("does not broadcast a Blast on an empty cell", async () => {
-    const { host, guest, flush } = await startReadyMatch();
-
-    act(() => host.match.blast(5, 3));
-    await flush();
-    expect(sentActions(host)).toHaveLength(0);
-
-    act(() => host.match.drop(2));
-    await flush();
-    expect(sentActions(host)).toEqual([{ protocolVersion: 1, type: "drop", revision: 1, col: 2 }]);
-    expect(guest.room.matchTransport?.status).toBe("ready");
-  });
-
-  it("does not broadcast on the opponent's turn", async () => {
-    const { guest, flush } = await startReadyMatch();
-
-    act(() => guest.match.drop(2));
-    await flush();
-    expect(sentActions(guest)).toHaveLength(0);
-  });
 });
 
 // ─── Revision gaps ───
@@ -301,24 +286,20 @@ function receive(peer: Peer, payload: unknown) {
   act(() => peer.channel().input.onMessage(payload));
 }
 
-const sentOfType = <T extends MatchWireMessage["type"]>(peer: Peer, type: T) =>
+const sentOfType = <T extends RoomMessage["type"]>(peer: Peer, type: T) =>
   peer
     .channel()
-    .sent.filter((message): message is Extract<MatchWireMessage, { type: T }> => message.type === type);
+    .sent.filter((message): message is Extract<RoomMessage, { type: T }> => message.type === type);
 
 describe("revision gaps", () => {
-  it.each([
-    ["missing", 3],
-    ["duplicate", 1],
-    ["out-of-order", 0],
-  ])("pauses instead of applying a %s action", async (_label, revision) => {
+  it("pauses the Room instead of applying an action out of sequence", async () => {
     const { host, guest, flush } = await startReadyMatch();
     act(() => host.match.drop(3));
     await flush();
     const board = guest.match.board;
 
     // The guest is at revision 1 and expects revision 2 next.
-    receive(guest, { protocolVersion: 1, type: "drop", revision, col: 5 });
+    receive(guest, { protocolVersion: 1, type: "drop", revision: 3, col: 5 });
 
     expect(guest.match.board).toEqual(board);
     expect(guest.room.state.phase).toBe("interrupted");
@@ -381,28 +362,6 @@ describe("snapshot repair", () => {
     expect(host.room.matchTransport?.status).toBe("ready");
   });
 
-  it("does not resume either peer before the acknowledgement completes", async () => {
-    const { network, host, guest, flush } = await startReadyMatch();
-    let guestStatusWhenAcking: string | undefined;
-    const transmit = network.transmit.bind(network);
-    network.transmit = (from, message) => {
-      if (message.type === "snapshot-applied") {
-        guestStatusWhenAcking = guest.room.matchTransport?.status;
-        return; // held: the host never hears it
-      }
-      transmit(from, message);
-    };
-
-    receive(guest, { protocolVersion: 1, type: "drop", revision: 5, col: 4 });
-    await flush();
-
-    expect(guestStatusWhenAcking).toBe("resynchronizing");
-    expect(host.room.state.phase).toBe("interrupted");
-    expect(host.room.matchTransport?.status).toBe("resynchronizing");
-    act(() => host.match.drop(1));
-    expect(sentActions(host)).toHaveLength(0);
-  });
-
   it("replaces divergent guest state atomically", async () => {
     const { network, host, guest, flush } = await startReadyMatch();
     act(() => host.match.drop(3));
@@ -428,28 +387,6 @@ describe("snapshot repair", () => {
     for (const render of guest.renders.slice(firstRender)) {
       expect([before, after]).toContain(render);
     }
-  });
-
-  it("host pushes its snapshot when it detects the gap", async () => {
-    const { network, host, guest, flush } = await startReadyMatch();
-    act(() => host.match.drop(3));
-    await flush();
-    // The guest's reply is lost; the host then sees a later revision.
-    network.lose = (message) => message.type === "drop";
-    act(() => guest.match.drop(4));
-    await flush();
-    network.lose = null;
-
-    receive(host, { protocolVersion: 1, type: "drop", revision: 3, col: 5 });
-    expect(host.room.state.phase).toBe("interrupted");
-    expect(sentOfType(host, "snapshot")).toHaveLength(1);
-
-    await flush();
-
-    expect(guest.match.board).toEqual(host.match.board);
-    expect(guest.match.currentPlayer).toBe("yellow");
-    expect(host.room.state.phase).toBe("ready");
-    expect(guest.room.state.phase).toBe("ready");
   });
 
   it("turns an undecodable snapshot into a resynchronization failure", async () => {
@@ -494,17 +431,27 @@ describe("snapshot repair", () => {
 
 // ─── Winner recording ───
 
-describe("winner recording", () => {
-  it("does not record a winner again when restoring a decided snapshot", async () => {
-    const { host, guest, flush } = await startReadyMatch();
-    for (let i = 0; i < 3; i++) {
-      act(() => host.match.drop(0));
-      await flush();
-      act(() => guest.match.drop(1));
-      await flush();
-    }
+/** Red stacks column 0 while yellow stacks column 1; with `win`, red takes the fourth. */
+async function stackColumns(
+  { host, guest, flush }: Awaited<ReturnType<typeof startReadyMatch>>,
+  { win }: { win: boolean },
+) {
+  for (let i = 0; i < 3; i++) {
     act(() => host.match.drop(0));
     await flush();
+    act(() => guest.match.drop(1));
+    await flush();
+  }
+  if (!win) return;
+  act(() => host.match.drop(0));
+  await flush();
+}
+
+describe("winner recording", () => {
+  it("does not record a winner again when restoring a decided snapshot", async () => {
+    const ctx = await startReadyMatch();
+    const { host, guest, flush } = ctx;
+    await stackColumns(ctx, { win: true });
     expect(host.match.winner).toBe("red");
     expect(guest.match.winner).toBe("red");
     expect(guest.onGameEnd).toHaveBeenCalledTimes(1);
@@ -522,39 +469,39 @@ describe("winner recording", () => {
 // ─── Rematch ───
 
 describe("rematch", () => {
-  it("ignores a rematch that arrives mid-resynchronization", async () => {
-    const { network, host, guest, flush } = await startReadyMatch();
-    act(() => host.match.drop(3));
-    await flush();
-    // The guest's acknowledgement is lost, so the host stays resynchronizing.
-    network.lose = (message) => message.type === "snapshot-applied";
-    receive(guest, { protocolVersion: 1, type: "drop", revision: 9, col: 0 });
-    await flush();
-    expect(host.room.matchTransport?.status).toBe("resynchronizing");
-    const board = host.match.board;
-
-    act(() => guest.match.reset());
-    await flush();
-
-    expect(sentOfType(guest, "rematch")).toHaveLength(1);
-    expect(host.match.board).toEqual(board);
-    expect(host.room.state.phase).toBe("interrupted");
-  });
-
-  it("starts a fresh Match identity with revision zero", async () => {
+  it("does not let either peer reset a Match in progress", async () => {
     const { host, guest, flush } = await startReadyMatch();
     act(() => host.match.drop(3));
     await flush();
-    receive(guest, { protocolVersion: 1, type: "drop", revision: 9, col: 0 });
-    await flush();
-    const firstMatch = sentOfType(host, "snapshot")[0].snapshot as { matchId: string };
+    const board = host.match.board;
+    expect(host.match.canReset).toBe(false);
+    expect(guest.match.canReset).toBe(false);
 
     act(() => host.match.reset());
+    act(() => guest.match.reset());
     await flush();
-    const [rematch] = sentOfType(host, "rematch");
-    expect(rematch.matchId).not.toBe(firstMatch.matchId);
+
+    expect(sentOfType(host, "rematch")).toEqual([]);
+    expect(sentOfType(guest, "rematch")).toEqual([]);
+    expect(host.match.board).toEqual(board);
+    expect(guest.match.board).toEqual(board);
+    expect(host.match.countdown).toBe(0);
+  });
+
+  it("starts a fresh Match identity with revision zero once the Match is decided", async () => {
+    const ctx = await startReadyMatch();
+    const { host, guest, flush } = ctx;
+    await stackColumns(ctx, { win: true });
+    expect(guest.match.canReset).toBe(true);
+
+    act(() => guest.match.reset());
+    await flush();
+    const [rematch] = sentOfType(guest, "rematch");
+    expect(rematch.matchId).not.toBe(OPENING_MATCH_ID);
+    expect(host.match.winner).toBeNull();
     await elapse(4000);
 
+    // Red won, so red starts the rematch.
     act(() => host.match.drop(2));
     await flush();
     expect(sentActions(host).at(-1)).toEqual({ protocolVersion: 1, type: "drop", revision: 1, col: 2 });
@@ -566,6 +513,30 @@ describe("rematch", () => {
       matchId: rematch.matchId,
       revision: 1,
     });
+    expect(guest.room.state.phase).toBe("ready");
+  });
+
+  it("gives simultaneous rematches one new Match on both peers", async () => {
+    const ctx = await startReadyMatch();
+    const { host, guest, flush } = ctx;
+    await stackColumns(ctx, { win: true });
+
+    act(() => {
+      host.match.reset();
+      guest.match.reset();
+    });
+    await flush();
+
+    const [hostRematch] = sentOfType(host, "rematch");
+    const [guestRematch] = sentOfType(guest, "rematch");
+    expect(hostRematch.matchId).toBe(guestRematch.matchId);
+    expect(host.room.state.phase).toBe("ready");
+    expect(guest.room.state.phase).toBe("ready");
+    await elapse(4000);
+
+    act(() => host.match.drop(2));
+    await flush();
+    expect(guest.match.board).toEqual(host.match.board);
     expect(guest.room.state.phase).toBe("ready");
   });
 });
@@ -614,7 +585,7 @@ describe("peer interruption and reconnect", () => {
     expect(guest.match.board).not.toEqual(host.match.board);
 
     // Same sessions come back. Hold the acknowledgement to prove nobody jumps the gun.
-    const held: MatchWireMessage[] = [];
+    const held: RoomMessage[] = [];
     network.lose = (message) => {
       if (message.type !== "snapshot-applied") return false;
       held.push(message);
@@ -747,14 +718,10 @@ describe("peer interruption and reconnect", () => {
   });
 
   it("ends as no contest without recording a winner when the peer does not return", async () => {
-    const { host, guest, flush } = await startReadyMatch();
+    const ctx = await startReadyMatch();
+    const { host, guest, flush } = ctx;
     // Red is one Drop from winning.
-    for (let i = 0; i < 3; i++) {
-      act(() => host.match.drop(0));
-      await flush();
-      act(() => guest.match.drop(1));
-      await flush();
-    }
+    await stackColumns(ctx, { win: false });
 
     sees(host, ["host"]);
     sees(guest, ["guest"]);

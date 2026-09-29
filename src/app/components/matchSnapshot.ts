@@ -2,7 +2,8 @@
  * matchSnapshot.ts — the Match Snapshot.
  *
  * A complete, host-authoritative picture of one Match at one revision. The Match
- * owns creating and restoring it; the Room carries it over the wire opaquely.
+ * owns creating and restoring it (through the Match sync, `matchSync.ts`); the
+ * Room carries it over the wire opaquely.
  * Decoding happens here, on the Match side, so a malformed snapshot never becomes
  * Board state.
  */
