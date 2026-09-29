@@ -1,3 +1,4 @@
+import { g } from "./ThemeContext";
 import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Loader2, X } from "lucide-react";

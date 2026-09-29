@@ -1,16 +1,11 @@
 import { createBrowserRouter } from "react-router-dom";
 import { GameApp } from "./App";
-import { OAuthConsent } from "./components/OAuthConsent";
 
 export const router = createBrowserRouter(
   [
     {
       path: "/",
       Component: GameApp,
-    },
-    {
-      path: "/oauth/consent",
-      Component: OAuthConsent,
     },
   ],
   {

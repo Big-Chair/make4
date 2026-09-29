@@ -1,3 +1,4 @@
+import { g } from "./ThemeContext";
 import { useState, useRef, useCallback, useEffect, useImperativeHandle, forwardRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X, Upload, Check, ZoomIn, ZoomOut, Move } from "lucide-react";
