@@ -3,13 +3,15 @@
 Shared nouns for the game. Use these names in code and discussion.
 
 ## Board & pieces
-- **Board** — 6×7 grid of `CellValue` (`null | "red" | "yellow"`). Owned by the rules engine (`useConnect4`).
+- **Board** — 6×7 grid of `CellValue` (`null | "red" | "yellow"`). Owned by the **Rules engine**.
+- **Rules engine** — the pure module that owns what a legal move is and what it does to the Board: Drop, Blast, **Timeout**, win/draw detection, turn advance, and the two Blast Tokens. It has no clock and no React state; the Match holds its state and calls it, and the AI searches over it. A rejected move is a value with a reason, never a silent no-op. (Decided 2026-09-29; replaces the `useConnect4` hook.)
+- **Timeout** — a move: the current player's turn clock expired, so the turn passes with no Board change. It is emitted only by the player whose turn it is, from their own clock. Online it advances the Match revision and is broadcast like a Drop; the peer's clock is display only and is corrected by the broadcast.
 - **Drop** — placing a piece in a column; it falls to the lowest empty row.
 - **Blast** — spending a one-per-player **Blast Token** to remove a target cell and its orthogonal neighbours, then re-settling the board with gravity.
 
 ## Match
 - **Match** — one playable game session across any mode (local, bot, online), from the pre-game **countdown** through to a decided **winner**. The **move pipeline** that turns a player's intent into a board change.
-- Implemented by `useMatch` (`src/app/components/useMatch.ts`) — a deep module over the rules engine (`useConnect4`), the AI (`connect4AI`), and the online transport (`OnlineMatchTransport`).
+- Implemented by `useMatch` (`src/app/components/useMatch.ts`) — a deep module over the Rules engine (`rules.ts`), the AI (`connect4AI`), and the online transport (`OnlineMatchTransport`).
 - Interface: four verbs — `drop(col)`, `blast(row, col)`, `autoBlast()`, `reset()` — plus read-only board/turn/countdown/winner state for rendering.
 - Invariants the Match owns so callers don't re-derive them:
   - turn legality (`isMyTurn`) — verbs are no-ops on the opponent's turn online;
