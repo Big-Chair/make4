@@ -4,7 +4,8 @@ import { motion, AnimatePresence } from "motion/react";
 import { Loader2, X } from "lucide-react";
 import type { Gesture, HandTrackingState } from "./useHandTracking";
 import type { Board, CellValue } from "./useConnect4";
-import { playDrop, playHover, playBlast } from "./useSoundEffects";
+import { playHover } from "./useSoundEffects";
+import type { MoveOutcome } from "./useMatch";
 
 // --- Hand skeleton connections for drawing ---
 const HAND_CONNECTIONS = [
@@ -33,8 +34,8 @@ interface CameraControlProps {
   blastMode: boolean;
   currentPlayer: "red" | "yellow";
   soundEnabled: boolean;
-  onDrop: (col: number) => void;
-  onAutoBlast: () => void;
+  onDrop: (col: number) => MoveOutcome;
+  onAutoBlast: () => MoveOutcome;
   onRematch?: () => void;
   disabled: boolean;
   winner: CellValue | "draw";
@@ -212,10 +213,10 @@ export function CameraControl({
     // --- FIST = Auto-blast best target ---
     if (curr === "fist" && hasBlastToken && cooldownOk) {
       lastActionTimeRef.current = now;
-      onAutoBlast();
-      if (soundEnabled) playBlast();
-      setActionFeedback("BLAST! 💥");
-      setTimeout(() => setActionFeedback(null), 1000);
+      if (onAutoBlast() === "applied") {
+        setActionFeedback("BLAST! 💥");
+        setTimeout(() => setActionFeedback(null), 1000);
+      }
       prevGestureRef.current = curr;
       return;
     }
@@ -223,10 +224,10 @@ export function CameraControl({
     // --- POINTDOWN = DROP piece (sustained downward finger movement) ---
     if (curr === "pointdown" && cooldownOk) {
       lastActionTimeRef.current = now;
-      onDrop(tracking.selectedCol);
-      if (soundEnabled) playDrop();
-      setActionFeedback(`Drop col ${tracking.selectedCol + 1}`);
-      setTimeout(() => setActionFeedback(null), 800);
+      if (onDrop(tracking.selectedCol) === "applied") {
+        setActionFeedback(`Drop col ${tracking.selectedCol + 1}`);
+        setTimeout(() => setActionFeedback(null), 800);
+      }
       prevGestureRef.current = curr;
       return;
     }

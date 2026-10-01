@@ -42,10 +42,12 @@ import {
  * Absence of a transport is local/bot play.
  *
  * Invariants:
- *  - `drop`/`blast`/`autoBlast` are no-ops when it is not `isMyTurn` (online).
- *  - `drop`/`blast`/`autoBlast` do NOT play sound for the local human path —
- *    GameBoard / CameraControl own that. Bot and opponent-received moves DO play
- *    sound, since those never pass through the board UI.
+ *  - `drop`/`blast`/`autoBlast` return a `MoveOutcome`. They are rejected during
+ *    the countdown, on the bot's turn, while an online Match is paused, when it
+ *    is not `isMyTurn` (online), and when the rules refuse the move.
+ *  - The Match owns move feedback: every applied move — local, bot, or the
+ *    opponent's — plays its sound here, and an applied Blast exits blast mode.
+ *    A rejected move does neither. Inputs (GameBoard, CameraControl) stay silent.
  *  - `onGameEnd` fires at most once per Match identity — restoring a decided
  *    Match Snapshot cannot record its winner again.
  *
@@ -58,6 +60,9 @@ import {
  * Online, `reset` is a rematch: refused until the Match is decided, so no peer
  * can reset a Match in progress.
  */
+/** What a move verb did: the Match applied it, or refused it with no effect. */
+export type MoveOutcome = "applied" | "rejected";
+
 export interface UseMatchOptions {
   gameMode: GameMode;
   difficulty: Difficulty;
@@ -102,10 +107,10 @@ export interface UseMatchReturn {
   showWinnerOverlay: boolean;
   setShowWinnerOverlay: (v: boolean) => void;
 
-  // Move verbs — turn-checked, locally applied, broadcast when online
-  drop: (col: number) => void;
-  blast: (row: number, col: number) => void;
-  autoBlast: () => void;
+  // Move verbs — legality-checked, locally applied, broadcast when online
+  drop: (col: number) => MoveOutcome;
+  blast: (row: number, col: number) => MoveOutcome;
+  autoBlast: () => MoveOutcome;
   reset: () => void;
 }
 
@@ -332,31 +337,41 @@ export function useMatch({
 
   // ─── Move verbs ───
 
-  /** Online, the sync checks the turn and broadcasts; locally the action just applies. */
+  const inputDisabled =
+    (gameMode === "bot" && game.currentPlayer === "yellow") ||
+    (gameMode === "online" && !isMyTurn) ||
+    onlinePaused ||
+    countdown > 0;
+
+  /** Every local move goes through here: legality first, then the rules (online,
+   *  the sync also checks the turn and broadcasts), then the move's feedback. */
   const play = useCallback(
-    (action: MatchAction) => {
-      if (gameMode === "online") return syncRef.current?.play(action) ?? false;
-      return applyAction(action);
+    (action: MatchAction): MoveOutcome => {
+      if (inputDisabled) return "rejected";
+      const applied = gameMode === "online"
+        ? syncRef.current?.play(action) ?? false
+        : applyAction(action);
+      if (!applied) return "rejected";
+      if (action.type === "blast") setBlastMode(false);
+      if (soundRef.current) {
+        if (action.type === "drop") playDrop();
+        else playBlast();
+      }
+      return "applied";
     },
-    [gameMode, applyAction],
+    [inputDisabled, gameMode, applyAction],
   );
 
-  const drop = useCallback((col: number) => {
-    play({ type: "drop", col });
-  }, [play]);
+  const drop = useCallback((col: number) => play({ type: "drop", col }), [play]);
 
-  const blast = useCallback((row: number, col: number) => {
-    play({ type: "blast", row, col });
-  }, [play]);
+  const blast = useCallback((row: number, col: number) => play({ type: "blast", row, col }), [play]);
 
   // Find the best target and blast it in one action (camera fist gesture)
-  const autoBlast = useCallback(() => {
-    if (game.winner || !game.hasBlastToken) return;
-    if (gameMode === "online" && (onlinePaused || !isMyTurn)) return;
-
+  const autoBlast = useCallback((): MoveOutcome => {
     const bestPos = findBestBlastTarget(game.board, game.currentPlayer);
-    if (bestPos) play({ type: "blast", row: bestPos[0], col: bestPos[1] });
-  }, [game.winner, game.hasBlastToken, game.board, game.currentPlayer, gameMode, onlinePaused, isMyTurn, play]);
+    if (!bestPos) return "rejected";
+    return play({ type: "blast", row: bestPos[0], col: bestPos[1] });
+  }, [game.board, game.currentPlayer, play]);
 
   const canReset = gameMode !== "online" || (!onlinePaused && game.winner !== null);
 
@@ -369,12 +384,6 @@ export function useMatch({
   const countdownLabel = countdown > 0
     ? countdown === 1 ? "GO!" : `${countdown - 1}`
     : null;
-
-  const inputDisabled =
-    (gameMode === "bot" && game.currentPlayer === "yellow") ||
-    (gameMode === "online" && !isMyTurn) ||
-    onlinePaused ||
-    countdown > 0;
 
   return {
     board: game.board,

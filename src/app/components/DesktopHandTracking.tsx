@@ -8,6 +8,7 @@ import { AnimatePresence } from "motion/react";
 import { useHandTracking, type HandTrackingState } from "./useHandTracking";
 import { CameraControl } from "./CameraControl";
 import type { Board, CellValue } from "./useConnect4";
+import type { MoveOutcome } from "./useMatch";
 
 export interface DesktopHandTrackingProps {
   /** Callback to sync hand-tracking state up to the parent. */
@@ -15,8 +16,8 @@ export interface DesktopHandTrackingProps {
   blastMode: boolean;
   currentPlayer: "red" | "yellow";
   soundEnabled: boolean;
-  onDrop: (col: number) => void;
-  onAutoBlast: () => void;
+  onDrop: (col: number) => MoveOutcome;
+  onAutoBlast: () => MoveOutcome;
   onRematch: () => void;
   disabled: boolean;
   winner: CellValue | "draw";
