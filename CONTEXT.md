@@ -13,9 +13,10 @@ Shared nouns for the game. Use these names in code and discussion.
 - **Match** — one playable game session across any mode (local, bot, online), from the pre-game **countdown** through to a decided **winner**. The **move pipeline** that turns a player's intent into a board change.
 - Implemented by `useMatch` (`src/app/components/useMatch.ts`) — a deep module over the Rules engine (`rules.ts`), the AI (`connect4AI`), and the **Match sync** (`matchSync.ts`) over the online transport (`OnlineMatchTransport`).
 - **Match sync** (`matchSync.ts`) — the Match side of the online wire, with no React and no clock. It owns the Match revision, the Match message envelopes (`protocolVersion`) and their decoding, duplicate detection, the Match Snapshot handshake, and rematch legality. `useMatch` speaks to it only in actions — play/apply a Drop or Blast, start a rematch, restore a snapshot — and never builds or reads a message.
-- Interface: four verbs — `drop(col)`, `blast(row, col)`, `autoBlast()`, `reset()` — plus read-only board/turn/countdown/winner state for rendering, and `canReset` (false online until the Match is decided).
+- Interface: four verbs — `drop(col)`, `blast(row, col)`, `autoBlast()`, `reset()` — where `drop`, `blast` and `autoBlast` return `true` only when the Match applied the move — plus read-only board/turn/countdown/winner state for rendering, and `canReset` (false online until the Match is decided).
 - Invariants the Match owns so callers don't re-derive them:
-  - turn legality (`isMyTurn`) — verbs are no-ops on the opponent's turn online;
+  - move legality — a move is refused during the countdown, on the bot's turn, while an online Match is paused, and on the opponent's turn online (`isMyTurn`);
+  - move feedback — an applied move plays its sound and an applied Blast leaves blast mode; a refused move does neither, so inputs (board, keyboard, camera) carry no move sounds or blast-mode logic;
   - broadcasting moves when an online transport is present (through the Match sync);
   - replying as the bot;
   - applying the opponent's broadcast;
