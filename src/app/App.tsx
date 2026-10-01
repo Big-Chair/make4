@@ -4,7 +4,7 @@ import { router } from "./routes";
 import { StartScreen, GameMode } from "./components/StartScreen";
 import { GameScreen } from "./components/GameScreen";
 import { Difficulty } from "./components/connect4AI";
-import { recordGame, fetchLeaderboard, fetchStats, recordVisit, type PlayerStats, type SiteStats } from "./components/api";
+import { recordGame, fetchStats, recordVisit, type SiteStats } from "./components/api";
 import { save as saveToken, type TokenConfig } from "./components/tokens";
 import { OnlineLobby } from "./components/OnlineLobby";
 import { useRoom } from "./components/useRoom";
@@ -32,16 +32,11 @@ export function GameApp() {
   const [player2Name, setPlayer2Name] = useState("");
   const [timerDuration, setTimerDuration] = useState(40);
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [leaderboard, setLeaderboard] = useState<PlayerStats[]>([]);
-  const [leaderboardLoading, setLeaderboardLoading] = useState(true);
   const [lastPlayerName, setLastPlayerName] = useState("");
-  const [currentPlayerData, setCurrentPlayerData] = useState<{ player: PlayerStats; rank: number } | null>(null);
   const [p1Token, setP1Token] = useState<TokenConfig>({ type: "default" });
   const [p2Token, setP2Token] = useState<TokenConfig>({ type: "default" });
   const [initialRoomCode, setInitialRoomCode] = useState<string | null>(null);
   const [siteStats, setSiteStats] = useState<SiteStats | null>(null);
-  const [leaderboardTokenConfigs, setLeaderboardTokenConfigs] = useState<Record<string, any>>({});
-  const [leaderboardLevel, setLeaderboardLevel] = useState("");
 
   // The owning Room Module. An online Match starts from a Ready Room and nothing else.
   const room = useRoom();
@@ -105,32 +100,12 @@ export function GameApp() {
     }
   }, []);
 
-  // Fetch leaderboard on mount and when returning to start screen
-  const loadLeaderboard = useCallback(async (level?: string) => {
-    setLeaderboardLoading(true);
-    const res = await fetchLeaderboard(lastPlayerName || undefined, 20, level || undefined);
-    if (res.ok) {
-      setLeaderboard(res.data.players);
-      setLeaderboardTokenConfigs(res.data.tokenConfigs || {});
-      if (res.data.currentPlayer && res.data.currentPlayerRank) {
-        setCurrentPlayerData({ player: res.data.currentPlayer, rank: res.data.currentPlayerRank });
-      } else {
-        setCurrentPlayerData(null);
-      }
-    } else {
-      setLeaderboard([]);
-      setLeaderboardTokenConfigs({});
-      setCurrentPlayerData(null);
-    }
-    setLeaderboardLoading(false);
-  }, [lastPlayerName]);
-
+  // Fetch site stats when returning to the start screen (its Leaderboard loads itself)
   useEffect(() => {
     if (screen === "start") {
-      loadLeaderboard(leaderboardLevel);
       loadStats();
     }
-  }, [screen, loadLeaderboard, loadStats]);
+  }, [screen, loadStats]);
 
   const handleStart = (
     mode: GameMode,
@@ -202,15 +177,8 @@ export function GameApp() {
           onStart={handleStart}
           score={score}
           onResetScore={() => setScore({ red: 0, yellow: 0, draws: 0 })}
-          leaderboard={leaderboard}
-          leaderboardLoading={leaderboardLoading}
-          currentPlayerData={currentPlayerData}
+          leaderboardPlayerName={lastPlayerName || undefined}
           siteStats={siteStats}
-          leaderboardTokenConfigs={leaderboardTokenConfigs}
-          onLeaderboardLevelChange={(level) => {
-            setLeaderboardLevel(level);
-            loadLeaderboard(level);
-          }}
         />
       ) : screen === "lobby" ? (
         <OnlineLobby

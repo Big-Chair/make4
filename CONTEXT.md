@@ -45,3 +45,7 @@ Shared nouns for the game. Use these names in code and discussion.
 - **No contest** — a Room that fails after readiness (deadline expiry: `peer-timeout` while a session is missing, `resync-failed` during the handshake; refused session; undecodable snapshot). The Match ends with no winner recorded and no leaderboard result.
 - **Room failure** — failures are values (`create-failed`, `join-failed`, `subscription-failed`, `room-unavailable`, `peer-timeout`, `resync-failed`), not inferred strings.
 - Only the **host** of a live Room persists an online Match result (`persistsMatchResult`); both peers update their local display score.
+
+## Leaderboard
+- **Leaderboard query** (`leaderboardQuery.ts`, `useLeaderboard`) — the one owner of what a Leaderboard shows: the level tabs (All, Easy 40s, Medium 35s, Hard 30s), the selected level, the viewing player, load and refresh, and token resolution. The selected level lives outside React, so the start screen and the in-game drawer share it and a remount keeps it. `Leaderboard` (start screen) and `LeaderboardDrawer` (in game) are render layers over it; the drawer loads only while open.
+- **Viewing player** — the player whose row is highlighted: the last player on this device on the start screen; in game, the guest's own name online, otherwise player 1.
