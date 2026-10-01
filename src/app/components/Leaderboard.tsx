@@ -274,13 +274,13 @@ export function Leaderboard({ query }: LeaderboardProps) {
         ))}
       </div>
 
-      <LeaderboardBoard query={query} />
+      <LeaderboardRows query={query} />
     </>
   );
 }
 
-function LeaderboardBoard({ query }: LeaderboardProps) {
-  const { players, loading, currentPlayer, currentPlayerOutsideList, isCurrentPlayer, tokenFor } = query;
+function LeaderboardRows({ query }: LeaderboardProps) {
+  const { players, loading, viewingPlayerBelowList, isViewingPlayer, tokenFor } = query;
 
   if (loading) {
     return (
@@ -314,14 +314,14 @@ function LeaderboardBoard({ query }: LeaderboardProps) {
           key={player.name}
           player={player}
           rank={index + 1}
-          isCurrentUser={isCurrentPlayer(player.name)}
+          isCurrentUser={isViewingPlayer(player.name)}
           animDelay={index * 0.05}
           tokenConfig={tokenFor(player.name)}
         />
       ))}
 
       {/* Separator + current player if outside top list */}
-      {currentPlayerOutsideList && currentPlayer && (
+      {viewingPlayerBelowList && (
         <>
           {/* Ellipsis separator */}
           <div className="flex items-center justify-center gap-1.5 py-2">
@@ -340,11 +340,11 @@ function LeaderboardBoard({ query }: LeaderboardProps) {
           </div>
 
           <PlayerRow
-            player={currentPlayer.player}
-            rank={currentPlayer.rank}
+            player={viewingPlayerBelowList.player}
+            rank={viewingPlayerBelowList.rank}
             isCurrentUser
             animDelay={players.length * 0.05 + 0.1}
-            tokenConfig={tokenFor(currentPlayer.player.name)}
+            tokenConfig={tokenFor(viewingPlayerBelowList.player.name)}
           />
         </>
       )}

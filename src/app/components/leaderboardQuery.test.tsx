@@ -14,7 +14,7 @@ vi.mock("./api", () => ({
     fetchLeaderboard(player, limit, level),
 }));
 
-import { LEVEL_TABS, useLeaderboard } from "./leaderboardQuery";
+import { useLeaderboard, viewingPlayerName } from "./leaderboardQuery";
 
 const stats = (name: string): PlayerStats => ({ name, wins: 1, losses: 0, draws: 0, gamesPlayed: 1 });
 
@@ -38,7 +38,7 @@ beforeEach(async () => {
   fetchLeaderboard.mockReset();
   fetchLeaderboard.mockImplementation(async (_p, _l, level) => boardFor(level));
   // The selected level outlives every view by design; start each test on "All".
-  const { result, unmount } = renderHook(() => useLeaderboard({ playerName: "Ada" }));
+  const { result, unmount } = renderHook(() => useLeaderboard({ viewingPlayerName: "Ada" }));
   act(() => result.current.selectLevel(""));
   await waitFor(() => expect(result.current.loading).toBe(false));
   unmount();
@@ -47,11 +47,12 @@ beforeEach(async () => {
 
 describe("useLeaderboard", () => {
   it("offers one tab list: All, Easy, Medium, Hard", () => {
-    expect(LEVEL_TABS.map((t) => t.label)).toEqual(["All", "Easy", "Medium", "Hard"]);
+    const { result } = renderHook(() => useLeaderboard({ viewingPlayerName: "Ada", active: false }));
+    expect(result.current.tabs.map((t) => t.label)).toEqual(["All", "Easy", "Medium", "Hard"]);
   });
 
   it("loads the selected level for the viewing player", async () => {
-    const { result } = renderHook(() => useLeaderboard({ playerName: "Ada" }));
+    const { result } = renderHook(() => useLeaderboard({ viewingPlayerName: "Ada" }));
     await waitFor(() => expect(result.current.players[0]?.name).toBe("top-all"));
     expect(fetchLeaderboard).toHaveBeenLastCalledWith("Ada", 20, undefined);
 
@@ -62,7 +63,7 @@ describe("useLeaderboard", () => {
   });
 
   it("refresh keeps level", async () => {
-    const { result } = renderHook(() => useLeaderboard({ playerName: "Ada" }));
+    const { result } = renderHook(() => useLeaderboard({ viewingPlayerName: "Ada" }));
     act(() => result.current.selectLevel("30"));
     await waitFor(() => expect(result.current.players[0]?.name).toBe("top-30"));
 
@@ -75,20 +76,20 @@ describe("useLeaderboard", () => {
   });
 
   it("remount keeps level", async () => {
-    const first = renderHook(() => useLeaderboard({ playerName: "Ada" }));
+    const first = renderHook(() => useLeaderboard({ viewingPlayerName: "Ada" }));
     act(() => first.result.current.selectLevel("40"));
     await waitFor(() => expect(first.result.current.players[0]?.name).toBe("top-40"));
     first.unmount();
 
     fetchLeaderboard.mockClear();
-    const second = renderHook(() => useLeaderboard({ playerName: "Ada" }));
+    const second = renderHook(() => useLeaderboard({ viewingPlayerName: "Ada" }));
     expect(second.result.current.level).toBe("40");
     await waitFor(() => expect(second.result.current.players[0]?.name).toBe("top-40"));
     expect(fetchLeaderboard.mock.calls.every((c) => c[2] === "40")).toBe(true);
   });
 
   it("does not load while inactive, and loads when it becomes active", async () => {
-    const { result, rerender } = renderHook((active: boolean) => useLeaderboard({ playerName: "Ada", active }), {
+    const { result, rerender } = renderHook((active: boolean) => useLeaderboard({ viewingPlayerName: "Ada", active }), {
       initialProps: false,
     });
     expect(fetchLeaderboard).not.toHaveBeenCalled();
@@ -103,7 +104,7 @@ describe("useLeaderboard", () => {
         ? new Promise((resolve) => (releaseAll = () => resolve(boardFor(undefined))))
         : Promise.resolve(boardFor(level)),
     );
-    const { result } = renderHook(() => useLeaderboard({ playerName: "Ada" }));
+    const { result } = renderHook(() => useLeaderboard({ viewingPlayerName: "Ada" }));
     act(() => result.current.selectLevel("35"));
     await waitFor(() => expect(result.current.players[0]?.name).toBe("top-35"));
 
@@ -112,24 +113,35 @@ describe("useLeaderboard", () => {
   });
 
   it("knows the viewing player, case-insensitively, and whether they are outside the list", async () => {
-    const { result } = renderHook(() => useLeaderboard({ playerName: "Ada" }));
-    await waitFor(() => expect(result.current.currentPlayer?.rank).toBe(7));
-    expect(result.current.isCurrentPlayer(" ada ")).toBe(true);
-    expect(result.current.isCurrentPlayer("top-all")).toBe(false);
-    expect(result.current.currentPlayerOutsideList).toBe(true);
+    const { result } = renderHook(() => useLeaderboard({ viewingPlayerName: "Ada" }));
+    await waitFor(() => expect(result.current.viewingPlayer?.rank).toBe(7));
+    expect(result.current.isViewingPlayer(" ada ")).toBe(true);
+    expect(result.current.isViewingPlayer("top-all")).toBe(false);
+    expect(result.current.viewingPlayerBelowList?.rank).toBe(7);
   });
 
   it("resolves a player's token from the server configs, case-insensitively", async () => {
-    const { result } = renderHook(() => useLeaderboard({ playerName: "Ada" }));
+    const { result } = renderHook(() => useLeaderboard({ viewingPlayerName: "Ada" }));
     await waitFor(() => expect(result.current.players).toHaveLength(1));
     expect(result.current.tokenFor("top-all")).toEqual({ type: "emoji", emoji: "🔥" });
   });
 
   it("shows an empty board when the request fails", async () => {
     fetchLeaderboard.mockResolvedValue({ ok: false, error: { kind: "network", message: "down" } });
-    const { result } = renderHook(() => useLeaderboard({ playerName: "Ada" }));
+    const { result } = renderHook(() => useLeaderboard({ viewingPlayerName: "Ada" }));
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.players).toEqual([]);
-    expect(result.current.currentPlayer).toBeNull();
+    expect(result.current.viewingPlayer).toBeNull();
+  });
+});
+
+describe("viewingPlayerName", () => {
+  it("is the guest's own name for an online guest, not the host's", () => {
+    expect(viewingPlayerName({ role: "guest", player1Name: "Host", player2Name: "Guest" })).toBe("Guest");
+  });
+
+  it("is player 1 for the host and offline", () => {
+    expect(viewingPlayerName({ role: "host", player1Name: "Host", player2Name: "Guest" })).toBe("Host");
+    expect(viewingPlayerName({ player1Name: "Ada", player2Name: "Bot (easy)" })).toBe("Ada");
   });
 });

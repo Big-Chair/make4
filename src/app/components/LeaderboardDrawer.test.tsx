@@ -33,7 +33,7 @@ beforeEach(() => {
 
 describe("LeaderboardDrawer", () => {
   it("refresh keeps level", async () => {
-    render(<LeaderboardDrawer isOpen onClose={() => {}} currentPlayerName="Ada" />);
+    render(<LeaderboardDrawer isOpen onClose={() => {}} viewingPlayerName="Ada" />);
     fireEvent.click(screen.getByRole("button", { name: /Hard/ }));
     await waitFor(() => expect(fetchLeaderboard).toHaveBeenLastCalledWith("Ada", 20, "30"));
 
@@ -50,9 +50,9 @@ describe("LeaderboardDrawer", () => {
   });
 
   it("loads for the viewing player only once opened", async () => {
-    const { rerender } = render(<LeaderboardDrawer isOpen={false} onClose={() => {}} currentPlayerName="Guest" />);
+    const { rerender } = render(<LeaderboardDrawer isOpen={false} onClose={() => {}} viewingPlayerName="Guest" />);
     expect(fetchLeaderboard).not.toHaveBeenCalled();
-    rerender(<LeaderboardDrawer isOpen onClose={() => {}} currentPlayerName="Guest" />);
+    rerender(<LeaderboardDrawer isOpen onClose={() => {}} viewingPlayerName="Guest" />);
     await waitFor(() => expect(screen.getByText("Grace")).toBeTruthy());
     expect(fetchLeaderboard.mock.calls.map((c) => c[0])).toEqual(["Guest"]);
   });

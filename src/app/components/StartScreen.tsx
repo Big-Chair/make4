@@ -50,7 +50,7 @@ export function StartScreen({ onStart, score, onResetScore, leaderboardPlayerNam
   const [p2Token, setP2Token] = useState<TokenConfig>(() => getSlotToken("p2") ?? DEFAULT_TOKEN_YELLOW);
   const [customizingToken, setCustomizingToken] = useState<"p1" | "p2" | null>(null);
 
-  const leaderboard = useLeaderboard({ playerName: leaderboardPlayerName });
+  const leaderboard = useLeaderboard({ viewingPlayerName: leaderboardPlayerName });
 
   // Refs for animated icons (so parent button hover triggers the animation)
   const howToPlayIconRef = useRef<HandRaisedIconHandle>(null);

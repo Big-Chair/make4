@@ -12,7 +12,7 @@ interface LeaderboardDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   /** The player viewing the drawer (the guest's own name online, not the host's). */
-  currentPlayerName?: string;
+  viewingPlayerName?: string;
 }
 
 const RANK_STYLES = [
@@ -139,9 +139,9 @@ function DrawerPlayerRow({
 }
 
 /** The in-game Leaderboard. A render layer over `useLeaderboard`; it loads only while open. */
-export function LeaderboardDrawer({ isOpen, onClose, currentPlayerName }: LeaderboardDrawerProps) {
-  const { tabs, level, selectLevel, refresh, loading, players, currentPlayer, currentPlayerOutsideList, isCurrentPlayer, tokenFor } =
-    useLeaderboard({ playerName: currentPlayerName, active: isOpen });
+export function LeaderboardDrawer({ isOpen, onClose, viewingPlayerName }: LeaderboardDrawerProps) {
+  const { tabs, level, selectLevel, refresh, loading, players, viewingPlayerBelowList, isViewingPlayer, tokenFor } =
+    useLeaderboard({ viewingPlayerName, active: isOpen });
 
   return (
     <AnimatePresence>
@@ -288,7 +288,7 @@ export function LeaderboardDrawer({ isOpen, onClose, currentPlayerName }: Leader
               ) : (
                 <div className="flex flex-col gap-1.5">
                   {players.map((player, index) => {
-                    const isCurrentUser = isCurrentPlayer(player.name);
+                    const isCurrentUser = isViewingPlayer(player.name);
 
                     return (
                       <DrawerPlayerRow
@@ -303,7 +303,7 @@ export function LeaderboardDrawer({ isOpen, onClose, currentPlayerName }: Leader
                   })}
 
                   {/* Separator + current player if outside top 20 */}
-                  {currentPlayerOutsideList && currentPlayer && (
+                  {viewingPlayerBelowList && (
                     <>
                       <div className="flex items-center justify-center gap-1.5 py-2">
                         <div className="w-1 h-1 rounded-full" style={{ background: "rgba(255,255,255,0.15)" }} />
@@ -311,11 +311,11 @@ export function LeaderboardDrawer({ isOpen, onClose, currentPlayerName }: Leader
                         <div className="w-1 h-1 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }} />
                       </div>
                       <DrawerPlayerRow
-                        player={currentPlayer.player}
-                        rank={currentPlayer.rank}
+                        player={viewingPlayerBelowList.player}
+                        rank={viewingPlayerBelowList.rank}
                         isCurrentUser
                         index={players.length}
-                        tokenConfig={tokenFor(currentPlayer.player.name)}
+                        tokenConfig={tokenFor(viewingPlayerBelowList.player.name)}
                       />
                     </>
                   )}

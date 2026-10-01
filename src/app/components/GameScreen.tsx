@@ -10,6 +10,7 @@ import { GameMode } from "./StartScreen";
 import type { Scoreboard } from "../App";
 import type { HandTrackingState } from "./useHandTracking";
 import { LeaderboardDrawer } from "./LeaderboardDrawer";
+import { viewingPlayerName } from "./leaderboardQuery";
 import { TokenCustomizer } from "./TokenCustomizer";
 import { type TokenConfig, DEFAULT_PALETTE } from "./tokens";
 import type { OnlineMatchTransport } from "./room";
@@ -562,7 +563,7 @@ export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, pla
       <LeaderboardDrawer
         isOpen={leaderboardOpen}
         onClose={() => setLeaderboardOpen(false)}
-        currentPlayerName={transport?.role === "guest" ? player2Name : player1Name}
+        viewingPlayerName={viewingPlayerName({ role: transport?.role, player1Name, player2Name })}
       />
 
       {/* Token Customizer */}

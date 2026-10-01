@@ -10,9 +10,10 @@
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { fetchLeaderboard, type PlayerStats } from "./api";
+import type { Role } from "./room";
 import { resolve as resolveToken, type TokenConfig } from "./tokens";
 
-export const LEVEL_TABS = [
+const LEVEL_TABS = [
   { key: "", label: "All", sub: "" },
   { key: "40", label: "Easy", sub: "40s" },
   { key: "35", label: "Medium", sub: "35s" },
@@ -22,7 +23,7 @@ export const LEVEL_TABS = [
 /** A timer length in seconds, or "" for all timed modes. */
 export type LeaderboardLevel = (typeof LEVEL_TABS)[number]["key"];
 
-export const LEADERBOARD_LIMIT = 20;
+const LEADERBOARD_LIMIT = 20;
 
 // ─── Selected level (shared, outlives every view) ───
 
@@ -51,15 +52,29 @@ export interface RankedPlayer {
   rank: number;
 }
 
-interface Board {
+interface LeaderboardSnapshot {
   players: PlayerStats[];
-  currentPlayer: RankedPlayer | null;
+  viewingPlayer: RankedPlayer | null;
   tokenConfigs: Record<string, unknown>;
 }
 
-const EMPTY_BOARD: Board = { players: [], currentPlayer: null, tokenConfigs: {} };
+const EMPTY_SNAPSHOT: LeaderboardSnapshot = { players: [], viewingPlayer: null, tokenConfigs: {} };
 
-const sameName = (a: string, b: string) => a.toLowerCase().trim() === b.toLowerCase().trim();
+const sameName = ({ name, other }: { name: string; other: string }) =>
+  name.toLowerCase().trim() === other.toLowerCase().trim();
+
+/** Whose row the in-game drawer highlights: the guest sees their own name online, everyone else player 1. */
+export function viewingPlayerName({
+  role,
+  player1Name,
+  player2Name,
+}: {
+  role?: Role;
+  player1Name: string;
+  player2Name: string;
+}) {
+  return role === "guest" ? player2Name : player1Name;
+}
 
 export interface LeaderboardQuery {
   tabs: typeof LEVEL_TABS;
@@ -70,49 +85,49 @@ export interface LeaderboardQuery {
   loading: boolean;
   players: PlayerStats[];
   /** The viewing player's row and rank, when they have played. */
-  currentPlayer: RankedPlayer | null;
-  /** True when the viewing player has a rank but is not in `players`. */
-  currentPlayerOutsideList: boolean;
-  isCurrentPlayer: (name: string) => boolean;
+  viewingPlayer: RankedPlayer | null;
+  /** The viewing player, when ranked but not in `players` (shown below the list). */
+  viewingPlayerBelowList: RankedPlayer | null;
+  isViewingPlayer: (name: string) => boolean;
   tokenFor: (name: string) => TokenConfig;
 }
 
 export function useLeaderboard({
-  playerName,
+  viewingPlayerName,
   active = true,
 }: {
   /** The player viewing the board; their row is highlighted. */
-  playerName?: string;
+  viewingPlayerName?: string;
   /** Load only while the board is on screen. */
   active?: boolean;
 }): LeaderboardQuery {
   const level = useSyncExternalStore(subscribeLevel, getLevel, getLevel);
-  const [board, setBoard] = useState<Board>(EMPTY_BOARD);
-  const [loading, setLoading] = useState(true);
+  const [snapshot, setSnapshot] = useState<LeaderboardSnapshot>(EMPTY_SNAPSHOT);
+  const [loading, setLoading] = useState(active);
   const latestRequest = useRef(0);
 
   const load = useCallback(
     async (forLevel: LeaderboardLevel) => {
       const request = ++latestRequest.current;
       setLoading(true);
-      const res = await fetchLeaderboard(playerName || undefined, LEADERBOARD_LIMIT, forLevel || undefined);
-      // A newer load (level change, refresh, new player) owns the board now.
+      const res = await fetchLeaderboard(viewingPlayerName || undefined, LEADERBOARD_LIMIT, forLevel || undefined);
+      // A newer load (level change, refresh, new player) owns the snapshot now.
       if (request !== latestRequest.current) return;
-      setBoard(
+      setSnapshot(
         res.ok
           ? {
               players: res.data.players,
-              currentPlayer:
+              viewingPlayer:
                 res.data.currentPlayer && res.data.currentPlayerRank
                   ? { player: res.data.currentPlayer, rank: res.data.currentPlayerRank }
                   : null,
               tokenConfigs: res.data.tokenConfigs ?? {},
             }
-          : EMPTY_BOARD,
+          : EMPTY_SNAPSHOT,
       );
       setLoading(false);
     },
-    [playerName],
+    [viewingPlayerName],
   );
 
   useEffect(() => {
@@ -124,10 +139,10 @@ export function useLeaderboard({
 
   const refresh = useCallback(() => void load(getLevel()), [load]);
 
-  const { players, currentPlayer, tokenConfigs } = board;
-  const isCurrentPlayer = useCallback(
-    (name: string) => currentPlayer != null && sameName(name, currentPlayer.player.name),
-    [currentPlayer],
+  const { players, viewingPlayer, tokenConfigs } = snapshot;
+  const isViewingPlayer = useCallback(
+    (name: string) => viewingPlayer != null && sameName({ name, other: viewingPlayer.player.name }),
+    [viewingPlayer],
   );
   const tokenFor = useCallback((name: string) => resolveToken(name, tokenConfigs), [tokenConfigs]);
 
@@ -138,9 +153,9 @@ export function useLeaderboard({
     refresh,
     loading,
     players,
-    currentPlayer,
-    currentPlayerOutsideList: currentPlayer != null && !players.some((p) => isCurrentPlayer(p.name)),
-    isCurrentPlayer,
+    viewingPlayer,
+    viewingPlayerBelowList: players.some((p) => isViewingPlayer(p.name)) ? null : viewingPlayer,
+    isViewingPlayer,
     tokenFor,
   };
 }
