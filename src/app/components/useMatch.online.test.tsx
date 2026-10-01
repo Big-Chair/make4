@@ -13,6 +13,7 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OPENING_MATCH_ID } from "./matchSync";
 import {
+  matchRoomOf,
   PROTOCOL_VERSION,
   type OpenChannelInput,
   type RoomAdapter,
@@ -150,6 +151,7 @@ function renderPeer(opts: { network: FakeNetwork; role: "host" | "guest"; timerD
       timerDuration: opts.timerDuration,
       soundEnabled: false,
       transport: room.matchTransport ?? undefined,
+      role: matchRoomOf(room.state)?.role,
       onGameEnd,
     });
     renders.push(visibleState(match));
@@ -399,6 +401,16 @@ describe("snapshot repair", () => {
     expect(guest.room.state.phase === "failed" && guest.room.state.error.kind).toBe("resync-failed");
     expect(guest.match.board).toEqual(board);
     expect(guest.match.inputDisabled).toBe(true);
+  });
+
+  it("keeps a failed guest yellow", async () => {
+    const { guest } = await startReadyMatch();
+    expect(guest.match.myColor).toBe("yellow");
+
+    receive(guest, { protocolVersion: 1, type: "snapshot", requestId: "r1", snapshot: { board: "junk" } });
+
+    expect(guest.room.state.phase).toBe("failed");
+    expect(guest.match.myColor).toBe("yellow");
   });
 
   it("turns a missing acknowledgement into a resynchronization failure", async () => {
