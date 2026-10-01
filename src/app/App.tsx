@@ -31,6 +31,7 @@ export function GameApp() {
   const [player1Name, setPlayer1Name] = useState("");
   const [player2Name, setPlayer2Name] = useState("");
   const [timerDuration, setTimerDuration] = useState(40);
+  const [blastTokens, setBlastTokens] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [lastPlayerName, setLastPlayerName] = useState("");
   const [p1Token, setP1Token] = useState<TokenConfig>({ type: "default" });
@@ -59,6 +60,7 @@ export function GameApp() {
         : readyRoom.participants.yellow.name;
     setGameMode("online");
     setTimerDuration(readyRoom.timerDuration);
+    setBlastTokens(readyRoom.blastTokens);
     setLastPlayerName(myName);
     setInitialRoomCode(null);
     startTransition(() => setScreen("game"));
@@ -128,6 +130,7 @@ export function GameApp() {
     setPlayer2Name(mode === "bot" ? `Bot (${diff || "medium"})` : (p2 || "Player 2"));
     setLastPlayerName(p1 || "Player 1");
     if (timer !== undefined) setTimerDuration(timer);
+    setBlastTokens(true);
     if (sound !== undefined) setSoundEnabled(sound);
     if (p1Tok) setP1Token(p1Tok);
     if (p2Tok) setP2Token(p2Tok);
@@ -197,6 +200,7 @@ export function GameApp() {
           player1Name={p1Name}
           player2Name={p2Name}
           timerDuration={timerDuration}
+          blastTokens={blastTokens}
           soundEnabled={soundEnabled}
           onSoundToggle={() => setSoundEnabled((s) => !s)}
           onDifficultyChange={(d) => {

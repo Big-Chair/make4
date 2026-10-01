@@ -66,6 +66,8 @@ export interface UseMatchOptions {
   gameMode: GameMode;
   difficulty: Difficulty;
   timerDuration: number;
+  /** Whether each player gets a Blast Token (online: the Room's persisted setting). Default true. */
+  blastTokens?: boolean;
   soundEnabled: boolean;
   /** The Room's Match seam. Stable for one Room generation. */
   transport?: OnlineMatchTransport;
@@ -120,11 +122,12 @@ export function useMatch({
   gameMode,
   difficulty,
   timerDuration,
+  blastTokens = true,
   soundEnabled,
   transport,
   onGameEnd,
 }: UseMatchOptions): UseMatchReturn {
-  const game = useConnect4(timerDuration);
+  const game = useConnect4({ timerDuration, blastTokens });
 
   const [blastMode, setBlastMode] = useState(false);
   const [botThinking, setBotThinking] = useState(false);
