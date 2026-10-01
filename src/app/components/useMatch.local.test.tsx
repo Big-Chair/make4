@@ -5,7 +5,7 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GameMode } from "./StartScreen";
-import { playBlast, playDrop } from "./useSoundEffects";
+import { playBlast, playDrop, playHover } from "./useSoundEffects";
 import { useMatch } from "./useMatch";
 
 vi.mock("./useSoundEffects", () => ({
@@ -129,5 +129,26 @@ describe("useMatch verbs (local and bot)", () => {
     expect(applied).toBe(false);
     expect(playBlast).not.toHaveBeenCalled();
     expect(result.current.blastMode).toBe(true);
+  });
+});
+
+describe("useMatch hover cue", () => {
+  const renderWithSound = (soundEnabled: boolean) =>
+    renderHook(() =>
+      useMatch({ gameMode: "local", difficulty: "easy", timerDuration: 0, soundEnabled, onGameEnd: () => {} }),
+    );
+
+  it("plays the hover sound when sound is on", () => {
+    vi.mocked(playHover).mockClear();
+    const { result } = renderWithSound(true);
+    act(() => result.current.hover());
+    expect(playHover).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays silent when sound is off", () => {
+    vi.mocked(playHover).mockClear();
+    const { result } = renderWithSound(false);
+    act(() => result.current.hover());
+    expect(playHover).not.toHaveBeenCalled();
   });
 });

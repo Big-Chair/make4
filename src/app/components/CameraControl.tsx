@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from "motion/react";
 import { Loader2, X } from "lucide-react";
 import type { Gesture, HandTrackingState } from "./useHandTracking";
 import type { Board, CellValue } from "./useConnect4";
-import { playHover } from "./useSoundEffects";
 
 // --- Hand skeleton connections for drawing ---
 const HAND_CONNECTIONS = [
@@ -32,11 +31,12 @@ interface CameraControlProps {
   tracking: HandTrackingState;
   blastMode: boolean;
   currentPlayer: "red" | "yellow";
-  soundEnabled: boolean;
   /** True when the Match applied the move; the Match plays its sound. */
   onDrop: (col: number) => boolean;
   onAutoBlast: () => boolean;
   onRematch?: () => void;
+  /** Hover signal: the Match decides whether it sounds. */
+  onHover: () => void;
   disabled: boolean;
   winner: CellValue | "draw";
   board: Board;
@@ -47,10 +47,10 @@ export function CameraControl({
   tracking,
   blastMode,
   currentPlayer,
-  soundEnabled,
   onDrop,
   onAutoBlast,
   onRematch,
+  onHover,
   disabled,
   winner,
   board,
@@ -199,7 +199,7 @@ export function CameraControl({
       lastActionTimeRef.current = now;
       setActionFeedback("REMATCH!");
       setTimeout(() => setActionFeedback(null), 1000);
-      if (soundEnabled) playHover();
+      onHover();
       setTimeout(() => onRematch(), 400);
       prevGestureRef.current = curr;
       return;
@@ -244,7 +244,7 @@ export function CameraControl({
     onDrop,
     onAutoBlast,
     onRematch,
-    soundEnabled,
+    onHover,
   ]);
 
   const gestureInfo = getGestureLabel(tracking.gesture);

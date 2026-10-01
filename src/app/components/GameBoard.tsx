@@ -1,11 +1,10 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ArrowDown } from "lucide-react";
 import type { Board, CellValue } from "./useConnect4";
 import { blastTargets, findBestBlastTarget } from "./blast";
 import { useBoardAnimation, isWinningCell } from "./useBoardAnimation";
-import { playHover } from "./useSoundEffects";
-import type { Gesture } from "./useHandTracking";
+import { useHandPointer } from "./handInput";
 import { type TokenConfig, getTokenVisuals, DEFAULT_PALETTE } from "./tokens";
 import { g } from "./ThemeContext";
 
@@ -32,11 +31,9 @@ interface GameBoardProps {
   hasBlastToken: boolean;
   blastMode: boolean;
   disabled?: boolean;
-  soundEnabled: boolean;
   onToggleBlast: () => void;
-  handSelectedCol?: number | null;
-  handBlastCursor?: [number, number] | null;
-  handGesture?: Gesture;
+  /** Hover signal: the Match decides whether it sounds. The board plays nothing. */
+  onHover: () => void;
   p1Token?: TokenConfig;
   p2Token?: TokenConfig;
   reducedMotion?: boolean;
@@ -54,11 +51,8 @@ export function GameBoard({
   hasBlastToken,
   blastMode,
   disabled,
-  soundEnabled,
   onToggleBlast,
-  handSelectedCol,
-  handBlastCursor,
-  handGesture,
+  onHover,
   p1Token,
   p2Token,
   reducedMotion,
@@ -71,27 +65,11 @@ export function GameBoard({
   // lag buffer. We render `displayBoard` and attach pieceRef/emptyRef to cells.
   const { displayBoard, pieceRef, emptyRef } = useBoardAnimation(board, winner, winningCells, reducedMotion);
 
-  // ── Stale-closure prevention refs (for keyboard handler) ──
-  const blastCursorRef = useRef(blastCursor);
-  blastCursorRef.current = blastCursor;
-  const blastModeRef = useRef(blastMode);
-  blastModeRef.current = blastMode;
-  const boardRef = useRef(board);
-  boardRef.current = board;
-  const winnerRef = useRef(winner);
-  winnerRef.current = winner;
-  const disabledRef = useRef(disabled);
-  disabledRef.current = disabled;
-  const soundEnabledRef = useRef(soundEnabled);
-  soundEnabledRef.current = soundEnabled;
-  const currentPlayerRef = useRef(currentPlayer);
-  currentPlayerRef.current = currentPlayer;
-  const onDropRef = useRef(onDrop);
-  onDropRef.current = onDrop;
-  const onBlastRef = useRef(onBlast);
-  onBlastRef.current = onBlast;
-  const onToggleBlastRef = useRef(onToggleBlast);
-  onToggleBlastRef.current = onToggleBlast;
+  // Hand pointer, read straight from the hand-tracking input (null when the camera is off)
+  const hand = useHandPointer();
+  const handSelectedCol = hand?.selectedCol ?? null;
+  const handBlastCursor = hand?.blastCursor ?? null;
+  const handGesture = hand?.gesture;
 
   // ── Blast cursor initialization ──
   useEffect(() => {
@@ -115,21 +93,20 @@ export function GameBoard({
     }
   }, [blastMode, board, currentPlayer]);
 
-  // ── Keyboard handler (registered once) ──
+  // ── Keyboard handler (re-subscribes when what it reads changes) ──
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (winnerRef.current || disabledRef.current) return;
+      if (winner || disabled) return;
 
       if (e.key === "0") {
-        onToggleBlastRef.current();
+        onToggleBlast();
         return;
       }
 
-      if (blastModeRef.current && blastCursorRef.current) {
-        const [row, col] = blastCursorRef.current;
-        const currentBoard = boardRef.current;
-        const rows = currentBoard.length;
-        const cols = currentBoard[0].length;
+      if (blastMode && blastCursor) {
+        const [row, col] = blastCursor;
+        const rows = board.length;
+        const cols = board[0].length;
         let newRow = row;
         let newCol = col;
         let moved = false;
@@ -153,25 +130,24 @@ export function GameBoard({
             break;
           case "Enter": case " ":
             e.preventDefault();
-            if (onBlastRef.current(row, col)) setHoveredCell(null);
+            if (onBlast(row, col)) setHoveredCell(null);
             return;
         }
 
         if (moved) {
           setBlastCursor([newRow, newCol]);
           setHoveredCell([newRow, newCol]);
-          if (soundEnabledRef.current) playHover();
+          onHover();
         }
         return;
       }
 
       const col = parseInt(e.key, 10);
-      if (col >= 1 && col <= 7) onDropRef.current(col - 1);
+      if (col >= 1 && col <= 7) onDrop(col - 1);
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [winner, disabled, blastMode, blastCursor, board, onToggleBlast, onBlast, onDrop, onHover]);
 
   // ── Blast targeting logic ──
   const activeBlastCell = hoveredCell || blastCursor;
@@ -359,7 +335,7 @@ export function GameBoard({
                       onMouseEnter={() => {
                         setHoveredCol(colIndex);
                         if (blastMode) setHoveredCell([rowIndex, colIndex]);
-                        if (!cell && soundEnabled && !reducedMotion) playHover();
+                        if (!cell && !reducedMotion) onHover();
                       }}
                       onMouseLeave={() => {
                         setHoveredCol(null);

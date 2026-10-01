@@ -21,7 +21,9 @@ Shared nouns for the game. Use these names in code and discussion.
   - replying as the bot;
   - applying the opponent's broadcast;
   - recording the winner at most once per Match identity (`onGameEnd`).
-- `GameScreen` is the **render layer** over a Match: it holds only presentation state (Spotify, hand-tracking, leaderboard, token editor, SFX volume).
+- `GameScreen` is the **render layer** over a Match: it holds only presentation state (Spotify, leaderboard, token editor, SFX volume).
+- **Inputs** — the board (click, keyboard) and the **hand-tracking input** (camera gestures) are dumb sources: they call the Match's verbs and its `hover()` cue, and own no sound, sound setting, or blast-mode logic.
+- **Hand-tracking input** (`DesktopHandTracking`, lazy-loaded with MediaPipe) owns the hand state. It publishes two views through `handInput.ts` — the camera status (toolbar toggle) and the hand pointer (the board's column arrows) — which readers subscribe to directly; hand state never passes through `GameScreen`.
 
 ## Modes & roles
 - **GameMode** — `"local" | "bot" | "online"`.
