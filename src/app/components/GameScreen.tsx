@@ -238,7 +238,6 @@ export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, pla
                 onBlast={match.blast}
                 hasBlastToken={match.hasBlastToken}
                 blastMode={match.blastMode}
-                setBlastMode={match.setBlastMode}
                 disabled={match.inputDisabled}
                 soundEnabled={soundEnabled}
                 onToggleBlast={match.toggleBlast}
