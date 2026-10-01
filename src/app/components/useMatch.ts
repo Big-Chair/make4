@@ -42,10 +42,12 @@ import {
  * Absence of a transport is local/bot play.
  *
  * Invariants:
- *  - `drop`/`blast`/`autoBlast` are no-ops when it is not `isMyTurn` (online).
- *  - `drop`/`blast`/`autoBlast` do NOT play sound for the local human path —
- *    GameBoard / CameraControl own that. Bot and opponent-received moves DO play
- *    sound, since those never pass through the board UI.
+ *  - `drop`/`blast`/`autoBlast` return whether the move applied. They refuse it
+ *    during the countdown, on the bot's turn, and online when it is not
+ *    `isMyTurn` or the Match is paused; the rules refuse illegal moves.
+ *  - The Match owns move feedback: every applied move plays its sound and an
+ *    applied Blast leaves blast mode. A refused move does neither, so inputs
+ *    (board, keyboard, camera) never play move sounds themselves.
  *  - `onGameEnd` fires at most once per Match identity — restoring a decided
  *    Match Snapshot cannot record its winner again.
  *
@@ -102,10 +104,10 @@ export interface UseMatchReturn {
   showWinnerOverlay: boolean;
   setShowWinnerOverlay: (v: boolean) => void;
 
-  // Move verbs — turn-checked, locally applied, broadcast when online
-  drop: (col: number) => void;
-  blast: (row: number, col: number) => void;
-  autoBlast: () => void;
+  // Move verbs — legality-checked, locally applied, broadcast when online. True when applied.
+  drop: (col: number) => boolean;
+  blast: (row: number, col: number) => boolean;
+  autoBlast: () => boolean;
   reset: () => void;
 }
 
@@ -332,31 +334,38 @@ export function useMatch({
 
   // ─── Move verbs ───
 
-  /** Online, the sync checks the turn and broadcasts; locally the action just applies. */
+  /**
+   * Play the local human's move. False when it is refused: during the countdown,
+   * on the bot's turn, by the sync (online turn and pause), or by the rules.
+   * Only an applied move sounds, and an applied Blast leaves blast mode.
+   */
   const play = useCallback(
     (action: MatchAction) => {
-      if (gameMode === "online") return syncRef.current?.play(action) ?? false;
-      return applyAction(action);
+      if (countdownRef.current > 0) return false;
+      if (gameMode === "bot" && gameRef.current.currentPlayer === "yellow") return false;
+      const applied = gameMode === "online"
+        ? syncRef.current?.play(action) ?? false
+        : applyAction(action);
+      if (!applied) return false;
+      if (action.type === "blast") setBlastMode(false);
+      if (soundRef.current) {
+        if (action.type === "drop") playDrop();
+        else playBlast();
+      }
+      return true;
     },
     [gameMode, applyAction],
   );
 
-  const drop = useCallback((col: number) => {
-    play({ type: "drop", col });
-  }, [play]);
+  const drop = useCallback((col: number) => play({ type: "drop", col }), [play]);
 
-  const blast = useCallback((row: number, col: number) => {
-    play({ type: "blast", row, col });
-  }, [play]);
+  const blast = useCallback((row: number, col: number) => play({ type: "blast", row, col }), [play]);
 
   // Find the best target and blast it in one action (camera fist gesture)
   const autoBlast = useCallback(() => {
-    if (game.winner || !game.hasBlastToken) return;
-    if (gameMode === "online" && (onlinePaused || !isMyTurn)) return;
-
     const bestPos = findBestBlastTarget(game.board, game.currentPlayer);
-    if (bestPos) play({ type: "blast", row: bestPos[0], col: bestPos[1] });
-  }, [game.winner, game.hasBlastToken, game.board, game.currentPlayer, gameMode, onlinePaused, isMyTurn, play]);
+    return bestPos ? play({ type: "blast", row: bestPos[0], col: bestPos[1] }) : false;
+  }, [game.board, game.currentPlayer, play]);
 
   const canReset = gameMode !== "online" || (!onlinePaused && game.winner !== null);
 

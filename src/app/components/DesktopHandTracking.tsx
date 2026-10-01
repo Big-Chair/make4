@@ -15,8 +15,9 @@ export interface DesktopHandTrackingProps {
   blastMode: boolean;
   currentPlayer: "red" | "yellow";
   soundEnabled: boolean;
-  onDrop: (col: number) => void;
-  onAutoBlast: () => void;
+  /** True when the Match applied the move. */
+  onDrop: (col: number) => boolean;
+  onAutoBlast: () => boolean;
   onRematch: () => void;
   disabled: boolean;
   winner: CellValue | "draw";

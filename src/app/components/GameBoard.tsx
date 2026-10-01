@@ -4,7 +4,7 @@ import { ArrowDown } from "lucide-react";
 import type { Board, CellValue } from "./useConnect4";
 import { blastTargets, findBestBlastTarget } from "./blast";
 import { useBoardAnimation, isWinningCell } from "./useBoardAnimation";
-import { playDrop, playHover, playBlast } from "./useSoundEffects";
+import { playHover } from "./useSoundEffects";
 import type { Gesture } from "./useHandTracking";
 import { type TokenConfig, getTokenVisuals, DEFAULT_PALETTE } from "./tokens";
 import { g } from "./ThemeContext";
@@ -25,11 +25,12 @@ interface GameBoardProps {
   currentPlayer: "red" | "yellow";
   winner: CellValue | "draw";
   winningCells: number[][] | null;
-  onDrop: (col: number) => void;
-  onBlast: (row: number, col: number) => void;
+  /** Move verbs: true when the Match applied the move. The Match plays its sound
+   *  and leaves blast mode; the board only clears its own hover state. */
+  onDrop: (col: number) => boolean;
+  onBlast: (row: number, col: number) => boolean;
   hasBlastToken: boolean;
   blastMode: boolean;
-  setBlastMode: (v: boolean) => void;
   disabled?: boolean;
   soundEnabled: boolean;
   onToggleBlast: () => void;
@@ -52,7 +53,6 @@ export function GameBoard({
   onBlast,
   hasBlastToken,
   blastMode,
-  setBlastMode,
   disabled,
   soundEnabled,
   onToggleBlast,
@@ -82,8 +82,6 @@ export function GameBoard({
   winnerRef.current = winner;
   const disabledRef = useRef(disabled);
   disabledRef.current = disabled;
-  const hasBlastTokenRef = useRef(hasBlastToken);
-  hasBlastTokenRef.current = hasBlastToken;
   const soundEnabledRef = useRef(soundEnabled);
   soundEnabledRef.current = soundEnabled;
   const currentPlayerRef = useRef(currentPlayer);
@@ -155,13 +153,7 @@ export function GameBoard({
             break;
           case "Enter": case " ":
             e.preventDefault();
-            if (currentBoard[row][col] !== null && hasBlastTokenRef.current) {
-              onBlastRef.current(row, col);
-              setBlastMode(false);
-              setBlastCursor(null);
-              setHoveredCell(null);
-              if (soundEnabledRef.current) playBlast();
-            }
+            if (onBlastRef.current(row, col)) setHoveredCell(null);
             return;
         }
 
@@ -174,10 +166,7 @@ export function GameBoard({
       }
 
       const col = parseInt(e.key, 10);
-      if (col >= 1 && col <= 7) {
-        onDropRef.current(col - 1);
-        if (soundEnabledRef.current) playDrop();
-      }
+      if (col >= 1 && col <= 7) onDropRef.current(col - 1);
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -202,15 +191,9 @@ export function GameBoard({
   const handleCellClick = (row: number, col: number) => {
     if (winner || disabled) return;
     if (blastMode && hasBlastToken) {
-      if (board[row][col] !== null) {
-        onBlast(row, col);
-        setBlastMode(false);
-        setHoveredCell(null);
-        if (soundEnabled) playBlast();
-      }
+      if (onBlast(row, col)) setHoveredCell(null);
     } else {
       onDrop(col);
-      if (soundEnabled) playDrop();
     }
   };
 
