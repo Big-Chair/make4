@@ -1,17 +1,18 @@
-import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { X, RefreshCw, Crown, Medal } from "lucide-react";
-import { fetchLeaderboard, type PlayerStats } from "./api";
+import type { PlayerStats } from "./api";
 import { TrophyIcon } from "../../imports/trophy-icon";
 import { UserIcon } from "../../imports/user-icon";
-import { resolve as resolveToken } from "./tokens";
+import type { TokenConfig } from "./tokens";
 import { MiniToken } from "./MiniToken";
 import { g } from "./ThemeContext";
+import { useLeaderboard } from "./leaderboardQuery";
 
 interface LeaderboardDrawerProps {
   isOpen: boolean;
   onClose: () => void;
-  currentPlayerName?: string;
+  /** The player viewing the drawer (the guest's own name online, not the host's). */
+  viewingPlayerName?: string;
 }
 
 const RANK_STYLES = [
@@ -25,21 +26,18 @@ function DrawerPlayerRow({
   rank,
   isCurrentUser,
   index,
-  tokenConfigs,
+  tokenConfig,
 }: {
   player: PlayerStats;
   rank: number;
   isCurrentUser: boolean;
   index: number;
-  tokenConfigs?: Record<string, any>;
+  tokenConfig: TokenConfig;
 }) {
   const rankIndex = rank - 1;
   const rankStyle = RANK_STYLES[rankIndex] || null;
   const winRate = player.gamesPlayed > 0 ? Math.round((player.wins / player.gamesPlayed) * 100) : 0;
   const RankIcon = rankStyle?.icon || null;
-
-  // Single resolution: server (case-insensitive) → localStorage → default
-  const tokenConfig = resolveToken(player.name, tokenConfigs);
 
   return (
     <motion.div
@@ -140,58 +138,10 @@ function DrawerPlayerRow({
   );
 }
 
-export function LeaderboardDrawer({ isOpen, onClose, currentPlayerName }: LeaderboardDrawerProps) {
-  const [players, setPlayers] = useState<PlayerStats[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [currentPlayerData, setCurrentPlayerData] = useState<{ player: PlayerStats; rank: number } | null>(null);
-  const [tokenConfigs, setTokenConfigs] = useState<Record<string, any>>({});
-  const [activeLevel, setActiveLevel] = useState<string>("");
-
-  const LEVEL_TABS = [
-    { key: "", label: "All", sub: "" },
-    { key: "40", label: "Easy", sub: "40s" },
-    { key: "35", label: "Medium", sub: "35s" },
-    { key: "30", label: "Hard", sub: "30s" },
-  ];
-
-  const loadLeaderboard = useCallback(async (level?: string) => {
-    setLoading(true);
-    const res = await fetchLeaderboard(currentPlayerName, 20, level || undefined);
-    if (res.ok) {
-      setPlayers(res.data.players);
-      setTokenConfigs(res.data.tokenConfigs || {});
-      if (res.data.currentPlayer && res.data.currentPlayerRank) {
-        setCurrentPlayerData({ player: res.data.currentPlayer, rank: res.data.currentPlayerRank });
-      } else {
-        setCurrentPlayerData(null);
-      }
-    } else {
-      setPlayers([]);
-      setTokenConfigs({});
-      setCurrentPlayerData(null);
-    }
-    setLoading(false);
-  }, [currentPlayerName]);
-
-  // Fetch when opened
-  useEffect(() => {
-    if (isOpen) {
-      loadLeaderboard(activeLevel);
-    }
-  }, [isOpen, loadLeaderboard, activeLevel]);
-
-  const handleLevelChange = (level: string) => {
-    setActiveLevel(level);
-    loadLeaderboard(level);
-  };
-
-  // Check if the current player is already in the top 20
-  const currentPlayerInList =
-    currentPlayerData &&
-    players.some(
-      (p) => p.name.toLowerCase().trim() === currentPlayerData.player.name.toLowerCase().trim()
-    );
-  const showCurrentPlayerBelow = currentPlayerData && !currentPlayerInList;
+/** The in-game Leaderboard. A render layer over `useLeaderboard`; it loads only while open. */
+export function LeaderboardDrawer({ isOpen, onClose, viewingPlayerName }: LeaderboardDrawerProps) {
+  const { tabs, level, selectLevel, refresh, loading, players, viewingPlayerBelowList, isViewingPlayer, tokenFor } =
+    useLeaderboard({ viewingPlayerName, active: isOpen });
 
   return (
     <AnimatePresence>
@@ -253,7 +203,8 @@ export function LeaderboardDrawer({ isOpen, onClose, currentPlayerName }: Leader
                 <motion.button
                   whileHover={{ scale: 1.1 }}
                   whileTap={{ scale: 0.9 }}
-                  onClick={() => loadLeaderboard(activeLevel)}
+                  onClick={refresh}
+                  aria-label="Refresh leaderboard"
                   disabled={loading}
                   className="w-8 h-8 rounded-lg flex items-center justify-center cursor-pointer"
                   style={{
@@ -288,24 +239,24 @@ export function LeaderboardDrawer({ isOpen, onClose, currentPlayerName }: Leader
               className="flex items-center gap-1.5 px-5 py-2.5 flex-shrink-0"
               style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}
             >
-              {LEVEL_TABS.map((tab) => (
+              {tabs.map((tab) => (
                 <button
                   key={tab.key}
-                  onClick={() => handleLevelChange(tab.key)}
+                  onClick={() => selectLevel(tab.key)}
                   className="flex-1 flex flex-col items-center justify-center gap-0.5 py-1.5 rounded-lg cursor-pointer transition-colors"
                   style={{
-                    background: activeLevel === tab.key ? "rgba(162,89,255,0.12)" : "rgba(255,255,255,0.03)",
-                    border: `1px solid ${activeLevel === tab.key ? "rgba(162,89,255,0.3)" : "rgba(255,255,255,0.06)"}`,
+                    background: level === tab.key ? "rgba(162,89,255,0.12)" : "rgba(255,255,255,0.03)",
+                    border: `1px solid ${level === tab.key ? "rgba(162,89,255,0.3)" : "rgba(255,255,255,0.06)"}`,
                   }}
                 >
                   <span
                     className="text-xs font-medium leading-tight"
-                    style={{ color: activeLevel === tab.key ? "#A259FF" : "rgba(255,255,255,0.5)" }}
+                    style={{ color: level === tab.key ? "#A259FF" : "rgba(255,255,255,0.5)" }}
                   >
                     {tab.label}
                   </span>
                   {tab.sub && (
-                    <span className="text-2xs" style={{ color: activeLevel === tab.key ? "rgba(162,89,255,0.6)" : "rgba(255,255,255,0.2)" }}>
+                    <span className="text-2xs" style={{ color: level === tab.key ? "rgba(162,89,255,0.6)" : "rgba(255,255,255,0.2)" }}>
                       {tab.sub}
                     </span>
                   )}
@@ -337,9 +288,7 @@ export function LeaderboardDrawer({ isOpen, onClose, currentPlayerName }: Leader
               ) : (
                 <div className="flex flex-col gap-1.5">
                   {players.map((player, index) => {
-                    const isCurrentUser =
-                      currentPlayerData != null &&
-                      player.name.toLowerCase().trim() === currentPlayerData.player.name.toLowerCase().trim();
+                    const isCurrentUser = isViewingPlayer(player.name);
 
                     return (
                       <DrawerPlayerRow
@@ -348,13 +297,13 @@ export function LeaderboardDrawer({ isOpen, onClose, currentPlayerName }: Leader
                         rank={index + 1}
                         isCurrentUser={isCurrentUser}
                         index={index}
-                        tokenConfigs={tokenConfigs}
+                        tokenConfig={tokenFor(player.name)}
                       />
                     );
                   })}
 
                   {/* Separator + current player if outside top 20 */}
-                  {showCurrentPlayerBelow && (
+                  {viewingPlayerBelowList && (
                     <>
                       <div className="flex items-center justify-center gap-1.5 py-2">
                         <div className="w-1 h-1 rounded-full" style={{ background: "rgba(255,255,255,0.15)" }} />
@@ -362,11 +311,11 @@ export function LeaderboardDrawer({ isOpen, onClose, currentPlayerName }: Leader
                         <div className="w-1 h-1 rounded-full" style={{ background: "rgba(255,255,255,0.06)" }} />
                       </div>
                       <DrawerPlayerRow
-                        player={currentPlayerData!.player}
-                        rank={currentPlayerData!.rank}
+                        player={viewingPlayerBelowList.player}
+                        rank={viewingPlayerBelowList.rank}
                         isCurrentUser
                         index={players.length}
-                        tokenConfigs={tokenConfigs}
+                        tokenConfig={tokenFor(viewingPlayerBelowList.player.name)}
                       />
                     </>
                   )}
@@ -380,7 +329,7 @@ export function LeaderboardDrawer({ isOpen, onClose, currentPlayerName }: Leader
               style={{ borderTop: "1px solid rgba(255,255,255,0.06)" }}
             >
               <span className="text-xs tracking-[0.5px]" style={{ color: "rgba(255,255,255,0.15)" }}>
-                {activeLevel ? `${LEVEL_TABS.find(t => t.key === activeLevel)?.label} mode (${activeLevel}s timer)` : "All timed modes"} · Top 20
+                {level ? `${tabs.find((t) => t.key === level)?.label} mode (${level}s timer)` : "All timed modes"} · Top 20
               </span>
             </div>
           </motion.div>
