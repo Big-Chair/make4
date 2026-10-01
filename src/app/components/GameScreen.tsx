@@ -562,7 +562,7 @@ export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, pla
       <LeaderboardDrawer
         isOpen={leaderboardOpen}
         onClose={() => setLeaderboardOpen(false)}
-        currentPlayerName={player1Name}
+        currentPlayerName={transport?.role === "guest" ? player2Name : player1Name}
       />
 
       {/* Token Customizer */}

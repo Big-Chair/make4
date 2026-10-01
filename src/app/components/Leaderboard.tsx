@@ -3,15 +3,13 @@ import { motion, AnimatePresence } from "motion/react";
 import { Medal, Crown } from "lucide-react";
 import { UserIcon } from "../../imports/user-icon";
 import type { PlayerStats } from "./api";
-import { type TokenConfig, getTokenVisuals, resolve as resolveToken } from "./tokens";
+import { type TokenConfig, getTokenVisuals } from "./tokens";
 import { MiniToken } from "./MiniToken";
 import { g } from "./ThemeContext";
+import type { LeaderboardQuery } from "./leaderboardQuery";
 
 interface LeaderboardProps {
-  players: PlayerStats[];
-  loading?: boolean;
-  currentPlayerData?: { player: PlayerStats; rank: number } | null;
-  tokenConfigs?: Record<string, any>;
+  query: LeaderboardQuery;
 }
 
 const RANK_STYLES = [
@@ -108,21 +106,19 @@ function PlayerRow({
   rank,
   isCurrentUser,
   animDelay,
-  tokenConfigs,
+  tokenConfig,
 }: {
   player: PlayerStats;
   rank: number;
   isCurrentUser: boolean;
   animDelay: number;
-  tokenConfigs?: Record<string, any>;
+  tokenConfig: TokenConfig;
 }) {
   const rankIndex = rank - 1;
   const rankStyle = RANK_STYLES[rankIndex] || null;
   const winRate = player.gamesPlayed > 0 ? Math.round((player.wins / player.gamesPlayed) * 100) : 0;
   const RankIcon = rankStyle?.icon || null;
 
-  // Single resolution: server (case-insensitive) → localStorage → default
-  const tokenConfig = resolveToken(player.name, tokenConfigs);
   const hasToken = tokenConfig && tokenConfig.type !== "default";
 
   const [hoverRect, setHoverRect] = useState<DOMRect | null>(null);
@@ -251,7 +247,41 @@ function PlayerRow({
   );
 }
 
-export function Leaderboard({ players, loading, currentPlayerData, tokenConfigs }: LeaderboardProps) {
+/** The start-screen Leaderboard: level tabs over the board. A render layer over `useLeaderboard`. */
+export function Leaderboard({ query }: LeaderboardProps) {
+  return (
+    <>
+      {/* Difficulty filter tabs */}
+      <div className="flex items-center gap-1 mb-3 px-1">
+        {query.tabs.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => query.selectLevel(tab.key)}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg cursor-pointer transition-colors text-xs font-medium"
+            style={{
+              background: query.level === tab.key ? "rgba(162,89,255,0.12)" : "transparent",
+              border: `1px solid ${query.level === tab.key ? "rgba(162,89,255,0.3)" : g.borderSubtle}`,
+              color: query.level === tab.key ? "#A259FF" : g.textDim,
+            }}
+          >
+            {tab.label}
+            {tab.sub && (
+              <span className="text-2xs" style={{ color: query.level === tab.key ? "rgba(162,89,255,0.6)" : g.textGhost }}>
+                {tab.sub}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      <LeaderboardBoard query={query} />
+    </>
+  );
+}
+
+function LeaderboardBoard({ query }: LeaderboardProps) {
+  const { players, loading, currentPlayer, currentPlayerOutsideList, isCurrentPlayer, tokenFor } = query;
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -276,38 +306,22 @@ export function Leaderboard({ players, loading, currentPlayerData, tokenConfigs 
     );
   }
 
-  // Check if the current player is already in the top list
-  const currentPlayerInTop =
-    currentPlayerData &&
-    players.some(
-      (p) => p.name.toLowerCase().trim() === currentPlayerData.player.name.toLowerCase().trim()
-    );
-
-  // Show the "your position" row only if they exist and are NOT in the top list
-  const showCurrentPlayerBelow = currentPlayerData && !currentPlayerInTop;
-
   return (
     <div className="flex flex-col gap-1.5 max-h-[420px] overflow-y-auto pr-1 custom-scrollbar">
       {/* Top 20 */}
-      {players.map((player, index) => {
-        const isCurrentUser =
-          currentPlayerData != null &&
-          player.name.toLowerCase().trim() === currentPlayerData.player.name.toLowerCase().trim();
-
-        return (
-          <PlayerRow
-            key={player.name}
-            player={player}
-            rank={index + 1}
-            isCurrentUser={isCurrentUser}
-            animDelay={index * 0.05}
-            tokenConfigs={tokenConfigs}
-          />
-        );
-      })}
+      {players.map((player, index) => (
+        <PlayerRow
+          key={player.name}
+          player={player}
+          rank={index + 1}
+          isCurrentUser={isCurrentPlayer(player.name)}
+          animDelay={index * 0.05}
+          tokenConfig={tokenFor(player.name)}
+        />
+      ))}
 
       {/* Separator + current player if outside top list */}
-      {showCurrentPlayerBelow && (
+      {currentPlayerOutsideList && currentPlayer && (
         <>
           {/* Ellipsis separator */}
           <div className="flex items-center justify-center gap-1.5 py-2">
@@ -326,11 +340,11 @@ export function Leaderboard({ players, loading, currentPlayerData, tokenConfigs 
           </div>
 
           <PlayerRow
-            player={currentPlayerData!.player}
-            rank={currentPlayerData!.rank}
+            player={currentPlayer.player}
+            rank={currentPlayer.rank}
             isCurrentUser
             animDelay={players.length * 0.05 + 0.1}
-            tokenConfigs={tokenConfigs}
+            tokenConfig={tokenFor(currentPlayer.player.name)}
           />
         </>
       )}

@@ -6,9 +6,9 @@ import { FigmaLogo, FigmaCursor, GridDots, DiamondShape, CrossShape } from "./Fi
 import { useState, useRef } from "react";
 import { Difficulty } from "./connect4AI";
 import type { Scoreboard } from "../App";
-import type { PlayerStats } from "./api";
 import type { SiteStats } from "./api";
 import { Leaderboard } from "./Leaderboard";
+import { useLeaderboard } from "./leaderboardQuery";
 import Make4Logo from "../../imports/Make4Logo";
 import { TrophyIcon } from "../../imports/trophy-icon";
 import { HandRaisedIcon, type HandRaisedIconHandle } from "../../imports/hand-raised-icon";
@@ -26,15 +26,12 @@ interface StartScreenProps {
   onStart: (mode: GameMode, difficulty?: Difficulty, player1?: string, player2?: string, timerDuration?: number, soundEnabled?: boolean, p1Token?: TokenConfig, p2Token?: TokenConfig) => void;
   score: Scoreboard;
   onResetScore: () => void;
-  leaderboard: PlayerStats[];
-  leaderboardLoading: boolean;
-  currentPlayerData?: { player: PlayerStats; rank: number } | null;
+  /** The last player who played on this device; their Leaderboard row is highlighted. */
+  leaderboardPlayerName?: string;
   siteStats?: SiteStats | null;
-  leaderboardTokenConfigs?: Record<string, any>;
-  onLeaderboardLevelChange?: (level: string) => void;
 }
 
-export function StartScreen({ onStart, score, onResetScore, leaderboard, leaderboardLoading, currentPlayerData, siteStats, leaderboardTokenConfigs, onLeaderboardLevelChange }: StartScreenProps) {
+export function StartScreen({ onStart, score, onResetScore, leaderboardPlayerName, siteStats }: StartScreenProps) {
   const [showNameEntry, setShowNameEntry] = useState<"local" | "bot" | null>(null);
   const [pendingDifficulty, setPendingDifficulty] = useState<Difficulty>("easy");
   const [p1Name, setP1Name] = useState(() => {
@@ -53,14 +50,7 @@ export function StartScreen({ onStart, score, onResetScore, leaderboard, leaderb
   const [p2Token, setP2Token] = useState<TokenConfig>(() => getSlotToken("p2") ?? DEFAULT_TOKEN_YELLOW);
   const [customizingToken, setCustomizingToken] = useState<"p1" | "p2" | null>(null);
 
-  // Leaderboard level filter
-  const [leaderboardLevel, setLeaderboardLevel] = useState("");
-  const LEVEL_TABS = [
-    { key: "", label: "All" },
-    { key: "40", label: "Easy", sub: "40s" },
-    { key: "35", label: "Medium", sub: "35s" },
-    { key: "30", label: "Hard", sub: "30s" },
-  ];
+  const leaderboard = useLeaderboard({ playerName: leaderboardPlayerName });
 
   // Refs for animated icons (so parent button hover triggers the animation)
   const howToPlayIconRef = useRef<HandRaisedIconHandle>(null);
@@ -802,33 +792,7 @@ export function StartScreen({ onStart, score, onResetScore, leaderboard, leaderb
                 Leaderboard
               </span>
             </div>
-            {/* Difficulty filter tabs */}
-            <div className="flex items-center gap-1 mb-3 px-1">
-              {LEVEL_TABS.map((tab) => (
-                <button
-                  key={tab.key}
-                  onClick={() => {
-                    setLeaderboardLevel(tab.key);
-                    onLeaderboardLevelChange?.(tab.key);
-                  }}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg cursor-pointer transition-colors text-xs font-medium"
-                  style={{
-                    background: leaderboardLevel === tab.key ? "rgba(162,89,255,0.12)" : "transparent",
-                    border: `1px solid ${leaderboardLevel === tab.key ? "rgba(162,89,255,0.3)" : g.borderSubtle}`,
-                    color: leaderboardLevel === tab.key ? "#A259FF" : g.textDim,
-                  }}
-                >
-                  {tab.label}
-                  {tab.sub && (
-                    <span className="text-2xs" style={{ color: leaderboardLevel === tab.key ? "rgba(162,89,255,0.6)" : g.textGhost }}>
-                      {tab.sub}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-
-            <Leaderboard players={leaderboard} loading={leaderboardLoading} currentPlayerData={currentPlayerData} tokenConfigs={leaderboardTokenConfigs} />
+            <Leaderboard query={leaderboard} />
           </div>
         </motion.div>
 
