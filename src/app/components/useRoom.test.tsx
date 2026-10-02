@@ -231,7 +231,7 @@ describe("readiness gating", () => {
     expect(channel().tracked).toHaveLength(0);
     act(() => channel().subscribed());
     expect(channel().tracked).toHaveLength(1);
-    expect(channel().tracked[0]).toMatchObject({ role: "host", token: RED, protocolVersion: 1 });
+    expect(channel().tracked[0]).toMatchObject({ role: "host", token: RED, protocolVersion: 2 });
   });
 });
 
@@ -323,7 +323,7 @@ describe("player tokens", () => {
     // Host Presence carries no usable token payload at all.
     act(() =>
       channel().presence([
-        { protocolVersion: 1, clientId: "c", role: "host", onlineAt: "now" },
+        { protocolVersion: 2, clientId: "c", role: "host", onlineAt: "now" },
         presence("guest", { token: BLUE }),
       ]),
     );
@@ -345,7 +345,7 @@ describe("player tokens", () => {
     expect(result.current.state.phase).toBe("ready");
 
     act(() =>
-      channel().message({ protocolVersion: 1, type: "token-sync", token: RED } satisfies RoomMessage),
+      channel().message({ protocolVersion: 2, type: "token-sync", token: RED } satisfies RoomMessage),
     );
 
     const room = result.current.state.phase === "ready" ? result.current.state.room : null;
@@ -383,12 +383,12 @@ describe("player tokens", () => {
     const mine: TokenConfig = { type: "gradient", gradient: "mine" };
     act(() => result.current.updateLocalToken(mine));
 
-    expect(channel().sent.at(-1)).toEqual({ protocolVersion: 1, type: "token-sync", token: mine });
+    expect(channel().sent.at(-1)).toEqual({ protocolVersion: 2, type: "token-sync", token: mine });
     expect(channel().tracked.at(-1)?.token).toEqual(mine);
     const room = result.current.state.phase === "ready" ? result.current.state.room : null;
     expect(room?.participants.yellow.token).toEqual(mine);
 
-    act(() => channel().message({ protocolVersion: 1, type: "token-sync", token: RED }));
+    act(() => channel().message({ protocolVersion: 2, type: "token-sync", token: RED }));
     expect(received).toHaveLength(0);
   });
 });
@@ -472,16 +472,30 @@ describe("failures", () => {
     });
 
     act(() => channel().message({ type: "drop", col: 3 })); // no protocolVersion
-    act(() => channel().message({ protocolVersion: 2, type: "drop", revision: 1, col: 3 }));
-    act(() => channel().message({ protocolVersion: 1, col: 3 })); // no type
-    act(() => channel().message({ protocolVersion: 1, type: "token-sync", token: "junk" }));
+    act(() => channel().message({ protocolVersion: 1, type: "drop", revision: 1, col: 3 }));
+    act(() => channel().message({ protocolVersion: 2, col: 3 })); // no type
+    act(() => channel().message({ protocolVersion: 2, type: "token-sync", token: "junk" }));
     act(() => channel().message("nonsense"));
     expect(received).toHaveLength(0);
 
     // A Match message's body is the Match's to decode (`matchSync.ts`): the Room
     // checks the envelope and forwards the payload as is.
-    act(() => channel().message({ protocolVersion: 1, type: "drop", revision: 1, col: 3 }));
-    expect(received).toEqual([{ protocolVersion: 1, type: "drop", revision: 1, col: 3 }]);
+    act(() => channel().message({ protocolVersion: 2, type: "drop", revision: 1, col: 3 }));
+    expect(received).toEqual([{ protocolVersion: 2, type: "drop", revision: 1, col: 3 }]);
+  });
+
+  it("never becomes ready with a peer on the previous protocol version", async () => {
+    const { adapter, channel } = createFakeAdapter();
+    const { result, phases } = await guestRoom(adapter);
+
+    act(() => channel().subscribed());
+    // An old cached tab: a well-formed version 1 host, which names Matches differently.
+    act(() => channel().presence([{ ...presence("host"), protocolVersion: 1 }, presence("guest")]));
+    act(() => channel().message({ protocolVersion: 1, type: "token-sync", token: RED }));
+
+    expect(result.current.state.phase).toBe("synchronizing");
+    expect(phases).not.toContain("ready");
+    expect(result.current.matchTransport).toBeNull();
   });
 });
 
@@ -520,7 +534,7 @@ describe("cleanup", () => {
     expect(state.fetchCalls).toBe(callsAfterLeave);
 
     // A late broadcast from the closed generation reaches nobody.
-    act(() => opened.message({ protocolVersion: 1, type: "drop", revision: 1, col: 3 }));
+    act(() => opened.message({ protocolVersion: 2, type: "drop", revision: 1, col: 3 }));
     expect(received).toHaveLength(0);
   });
 
