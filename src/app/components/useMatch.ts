@@ -24,6 +24,7 @@ import {
   playTimerTick,
   playTimerUrgent,
   playReset,
+  playHover,
   playClick,
 } from "./useSoundEffects";
 
@@ -47,7 +48,8 @@ import {
  *    `isMyTurn` or the Match is paused; the rules refuse illegal moves.
  *  - The Match owns move feedback: every applied move plays its sound and an
  *    applied Blast leaves blast mode. A refused move does neither, so inputs
- *    (board, keyboard, camera) never play move sounds themselves.
+ *    (board, keyboard, camera) never play sounds themselves — they signal
+ *    `hover()` and the Match plays its cue.
  *  - `onGameEnd` fires at most once per Match identity — restoring a decided
  *    Match Snapshot cannot record its winner again.
  *
@@ -64,6 +66,8 @@ export interface UseMatchOptions {
   gameMode: GameMode;
   difficulty: Difficulty;
   timerDuration: number;
+  /** Whether each player gets a Blast Token (online: the Room's persisted setting). Default true. */
+  blastTokens?: boolean;
   soundEnabled: boolean;
   /** The Room's Match seam. Stable for one Room generation. */
   transport?: OnlineMatchTransport;
@@ -111,18 +115,22 @@ export interface UseMatchReturn {
   blast: (row: number, col: number) => boolean;
   autoBlast: () => boolean;
   reset: () => void;
+
+  /** Hover cue: inputs signal a hover, the Match plays it when sound is on. */
+  hover: () => void;
 }
 
 export function useMatch({
   gameMode,
   difficulty,
   timerDuration,
+  blastTokens = true,
   soundEnabled,
   transport,
   role,
   onGameEnd,
 }: UseMatchOptions): UseMatchReturn {
-  const game = useConnect4(timerDuration);
+  const game = useConnect4({ timerDuration, blastTokens });
 
   const [blastMode, setBlastMode] = useState(false);
   const [botThinking, setBotThinking] = useState(false);
@@ -370,6 +378,10 @@ export function useMatch({
     return bestPos ? play({ type: "blast", row: bestPos[0], col: bestPos[1] }) : false;
   }, [game.board, game.currentPlayer, play]);
 
+  const hover = useCallback(() => {
+    if (soundRef.current) playHover();
+  }, []);
+
   const canReset = gameMode !== "online" || (!onlinePaused && game.winner !== null);
 
   const reset = useCallback(() => {
@@ -419,5 +431,6 @@ export function useMatch({
     blast,
     autoBlast,
     reset,
+    hover,
   };
 }

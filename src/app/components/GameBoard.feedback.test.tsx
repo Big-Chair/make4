@@ -2,10 +2,11 @@
  * Move feedback through the real board: GameBoard wired to a real local Match,
  * as GameScreen wires it. Only the sound module is faked.
  */
-import { act, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GameBoard } from "./GameBoard";
-import { playDrop } from "./useSoundEffects";
+import { publishHandInput, registerHandControls } from "./handInput";
+import { playDrop, playHover } from "./useSoundEffects";
 import { useMatch, type UseMatchReturn } from "./useMatch";
 
 vi.mock("./useSoundEffects", () => ({
@@ -41,8 +42,8 @@ function LocalBoard() {
       hasBlastToken={match.hasBlastToken}
       blastMode={match.blastMode}
       disabled={match.inputDisabled}
-      soundEnabled
       onToggleBlast={match.toggleBlast}
+      onHover={match.hover}
       reducedMotion
     />
   );
@@ -64,7 +65,10 @@ async function finishCountdown() {
 
 describe("GameBoard move feedback", () => {
   beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    cleanup(); // no Vitest globals, so Testing Library does not unmount for us
+    vi.useRealTimers();
+  });
 
   it("a rejected drop into a full column plays no sound", async () => {
     render(<LocalBoard />);
@@ -81,5 +85,78 @@ describe("GameBoard move feedback", () => {
     press("1");
     expect(match.board).toBe(before); // the Match rejected it
     expect(playDrop).not.toHaveBeenCalled();
+  });
+
+  it("moving the keyboard blast cursor sounds the Match's hover cue", async () => {
+    render(<LocalBoard />);
+    await finishCountdown();
+    press("1"); // a piece to aim at
+    press("0"); // yellow enters blast mode
+    expect(match.blastMode).toBe(true);
+    vi.mocked(playHover).mockClear();
+
+    press("ArrowUp");
+    expect(playHover).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("GameBoard as a dumb input", () => {
+  afterEach(() => cleanup());
+
+  const renderBoard = (onHover = vi.fn()) => {
+    const view = render(
+      <GameBoard
+        board={Array.from({ length: 6 }, () => Array(7).fill(null))}
+        currentPlayer="red"
+        winner={null}
+        winningCells={null}
+        onDrop={() => true}
+        onBlast={() => true}
+        hasBlastToken
+        blastMode={false}
+        onToggleBlast={() => {}}
+        onHover={onHover}
+      />,
+    );
+    return { ...view, onHover };
+  };
+
+  it("signals hover on an empty cell and plays no sound itself", () => {
+    vi.mocked(playHover).mockClear();
+    const { container, onHover } = renderBoard();
+    const cell = container.querySelector("button.rounded-full");
+    if (!cell) throw new Error("no cell");
+    fireEvent.mouseEnter(cell);
+    expect(onHover).toHaveBeenCalledTimes(1);
+    expect(playHover).not.toHaveBeenCalled();
+  });
+
+  it("points at the hand-tracking column straight from the hand input", () => {
+    const { container } = renderBoard();
+    const arrows = () => container.querySelectorAll('svg[width="24"][height="28"]').length;
+    // The pointed column's cells get a faint tint (no exit animation, unlike the arrow).
+    const tinted = () =>
+      Array.from(container.querySelectorAll<HTMLElement>("button.rounded-full"))
+        .filter((cell) => cell.style.background.includes("0.08")).length;
+    expect(arrows()).toBe(0);
+    expect(tinted()).toBe(0);
+
+    let unregister = () => {};
+    act(() => {
+      unregister = registerHandControls({ start: () => {}, stop: () => {} });
+      publishHandInput({
+        isTracking: true,
+        isLoading: false,
+        error: null,
+        gesture: "point",
+        selectedCol: 2,
+        blastCursor: null,
+      });
+    });
+    expect(arrows()).toBe(1);
+    expect(tinted()).toBe(6); // every cell of column 3
+
+    act(() => unregister()); // the camera input unmounts
+    expect(tinted()).toBe(0);
   });
 });

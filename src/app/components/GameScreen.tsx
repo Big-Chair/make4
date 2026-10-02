@@ -8,7 +8,7 @@ import { SpotifyPlayer } from "./SpotifyPlayer";
 import { Difficulty } from "./connect4AI";
 import { GameMode } from "./StartScreen";
 import type { Scoreboard } from "../App";
-import type { HandTrackingState } from "./useHandTracking";
+import { toggleHandTracking, useHandCamera } from "./handInput";
 import { LeaderboardDrawer } from "./LeaderboardDrawer";
 import { viewingPlayerName } from "./leaderboardQuery";
 import { TokenCustomizer } from "./TokenCustomizer";
@@ -24,23 +24,6 @@ import { g } from "./ThemeContext";
 // HMR cache-bust
 const LazyDesktopHandTracking = lazy(() => import("./DesktopHandTracking"));
 
-const NOOP_HAND_TRACKING: HandTrackingState = {
-  isTracking: false,
-  isLoading: false,
-  error: null,
-  gesture: "none",
-  handX: 0.5,
-  handY: 0.5,
-  selectedCol: 3,
-  blastCursor: null,
-  confidence: 0,
-  videoRef: { current: null },
-  canvasRef: { current: null },
-  landmarks: null,
-  start: () => {},
-  stop: () => {},
-};
-
 interface GameScreenProps {
   onExit: () => void;
   gameMode: GameMode;
@@ -50,6 +33,8 @@ interface GameScreenProps {
   player1Name: string;
   player2Name: string;
   timerDuration: number;
+  /** Whether each player gets a Blast Token. Default true. */
+  blastTokens?: boolean;
   soundEnabled: boolean;
   onSoundToggle: () => void;
   onDifficultyChange?: (d: Difficulty) => void;
@@ -65,16 +50,15 @@ interface GameScreenProps {
   onP2TokenChange?: (config: TokenConfig) => void;
 }
 
-export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, player1Name, player2Name, timerDuration, soundEnabled, onSoundToggle, onDifficultyChange, p1Token, p2Token, transport, role, roomNotice = null, onP1TokenChange, onP2TokenChange }: GameScreenProps) {
+export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, player1Name, player2Name, timerDuration, blastTokens = true, soundEnabled, onSoundToggle, onDifficultyChange, p1Token, p2Token, transport, role, roomNotice = null, onP1TokenChange, onP2TokenChange }: GameScreenProps) {
   const isMobile = useIsMobile();
 
   // The deep move pipeline: board state, turn legality, AI, online sync, countdown,
   // winner recording — all behind four verbs (drop / blast / autoBlast / reset).
-  const match = useMatch({ gameMode, difficulty, timerDuration, soundEnabled, transport, role, onGameEnd });
+  const match = useMatch({ gameMode, difficulty, timerDuration, blastTokens, soundEnabled, transport, role, onGameEnd });
 
-  // Hand tracking state — synced from the lazy-loaded DesktopHandTracking child on desktop,
-  // or stays as the no-op stub on mobile.
-  const [handTracking, setHandTracking] = useState<HandTrackingState>(NOOP_HAND_TRACKING);
+  // Camera status for the toolbar toggle, read from the hand-tracking input.
+  const handCamera = useHandCamera();
 
   // Leaderboard drawer state
   const [leaderboardOpen, setLeaderboardOpen] = useState(false);
@@ -164,16 +148,10 @@ export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, pla
           onToggleBlast={match.toggleBlast}
           soundEnabled={soundEnabled}
           onSoundToggle={onSoundToggle}
-          cameraTracking={handTracking.isTracking}
-          cameraLoading={handTracking.isLoading}
-          cameraError={handTracking.error}
-          onCameraToggle={isMobile ? undefined : () => {
-            if (handTracking.isTracking) {
-              handTracking.stop();
-            } else {
-              handTracking.start();
-            }
-          }}
+          cameraTracking={handCamera.isTracking}
+          cameraLoading={handCamera.isLoading}
+          cameraError={handCamera.error}
+          onCameraToggle={isMobile ? undefined : toggleHandTracking}
           onLeaderboardToggle={() => setLeaderboardOpen((o) => !o)}
           leaderboardOpen={leaderboardOpen}
           sfxVolume={sfxVolume}
@@ -242,11 +220,8 @@ export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, pla
                 hasBlastToken={match.hasBlastToken}
                 blastMode={match.blastMode}
                 disabled={match.inputDisabled}
-                soundEnabled={soundEnabled}
                 onToggleBlast={match.toggleBlast}
-                handSelectedCol={handTracking.isTracking ? handTracking.selectedCol : null}
-                handBlastCursor={handTracking.isTracking ? handTracking.blastCursor : null}
-                handGesture={handTracking.isTracking ? handTracking.gesture : undefined}
+                onHover={match.hover}
                 p1Token={p1Token}
                 p2Token={p2Token}
                 reducedMotion={isMobile}
@@ -545,13 +520,12 @@ export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, pla
       {!isMobile && (
         <Suspense fallback={null}>
           <LazyDesktopHandTracking
-            onStateSync={setHandTracking}
             blastMode={match.blastMode}
             currentPlayer={match.currentPlayer}
-            soundEnabled={soundEnabled}
             onDrop={match.drop}
             onAutoBlast={match.autoBlast}
             onRematch={match.reset}
+            onHover={match.hover}
             disabled={match.inputDisabled}
             winner={match.winner}
             board={match.board}

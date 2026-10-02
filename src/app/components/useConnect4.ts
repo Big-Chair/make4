@@ -127,14 +127,17 @@ export function hasConnect4(board: Board, player: CellValue): boolean {
   return false;
 }
 
-/** timerDuration: 0 = no timer, positive number = seconds per turn */
-export function useConnect4(timerDuration: number = 40) {
+/**
+ * timerDuration: 0 = no timer, positive number = seconds per turn.
+ * blastTokens: whether each player starts (and every rematch restarts) with a Blast Token.
+ */
+export function useConnect4({ timerDuration = 40, blastTokens = true }: { timerDuration?: number; blastTokens?: boolean } = {}) {
   const [board, setBoard] = useState<Board>(createEmptyBoard());
   const [currentPlayer, setCurrentPlayer] = useState<"red" | "yellow">("red");
   const [winner, setWinner] = useState<CellValue | "draw">(null);
   const [winningCells, setWinningCells] = useState<number[][] | null>(null);
-  const [redBlastToken, setRedBlastToken] = useState(true);
-  const [yellowBlastToken, setYellowBlastToken] = useState(true);
+  const [redBlastToken, setRedBlastToken] = useState(blastTokens);
+  const [yellowBlastToken, setYellowBlastToken] = useState(blastTokens);
   const [timer, setTimer] = useState(timerDuration || 0);
   const [moveCount, setMoveCount] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -241,12 +244,12 @@ export function useConnect4(timerDuration: number = 40) {
     setCurrentPlayer(startingPlayer || "red");
     setWinner(null);
     setWinningCells(null);
-    setRedBlastToken(true);
-    setYellowBlastToken(true);
+    setRedBlastToken(blastTokens);
+    setYellowBlastToken(blastTokens);
     setTimer(timerDuration || 0);
     setMoveCount(0);
     setPaused(false);
-  }, [timerDuration]);
+  }, [timerDuration, blastTokens]);
 
   /**
    * Replace the whole game state in one batch, so a render never sees half of a

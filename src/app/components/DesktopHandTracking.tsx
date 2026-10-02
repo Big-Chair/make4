@@ -1,24 +1,26 @@
 /**
- * Desktop-only wrapper that encapsulates useHandTracking + CameraControl.
+ * Desktop-only hand-tracking input: useHandTracking + CameraControl.
  * This module is lazy-loaded so that mobile devices never pull in the
  * MediaPipe dependency graph or CameraControl rendering code.
+ *
+ * The hand state stays here. It is published through `handInput` for the
+ * toolbar toggle and the board's column arrows, never lifted into GameScreen.
  */
 import { useEffect, useRef } from "react";
 import { AnimatePresence } from "motion/react";
-import { useHandTracking, type HandTrackingState } from "./useHandTracking";
+import { useHandTracking } from "./useHandTracking";
+import { publishHandInput, registerHandControls } from "./handInput";
 import { CameraControl } from "./CameraControl";
 import type { Board, CellValue } from "./useConnect4";
 
 export interface DesktopHandTrackingProps {
-  /** Callback to sync hand-tracking state up to the parent. */
-  onStateSync: (state: HandTrackingState) => void;
   blastMode: boolean;
   currentPlayer: "red" | "yellow";
-  soundEnabled: boolean;
   /** True when the Match applied the move. */
   onDrop: (col: number) => boolean;
   onAutoBlast: () => boolean;
   onRematch: () => void;
+  onHover: () => void;
   disabled: boolean;
   winner: CellValue | "draw";
   board: Board;
@@ -26,13 +28,12 @@ export interface DesktopHandTrackingProps {
 }
 
 export default function DesktopHandTracking({
-  onStateSync,
   blastMode,
   currentPlayer,
-  soundEnabled,
   onDrop,
   onAutoBlast,
   onRematch,
+  onHover,
   disabled,
   winner,
   board,
@@ -40,40 +41,21 @@ export default function DesktopHandTracking({
 }: DesktopHandTrackingProps) {
   const handTracking = useHandTracking();
 
-  // Sync hand-tracking state to parent. We track individual values to avoid
-  // infinite loops: only call setState when something actually changed.
-  const cbRef = useRef(onStateSync);
-  cbRef.current = onStateSync;
-  const prevTracking = useRef(false);
-  const prevLoading = useRef(false);
-  const prevError = useRef<string | null>(null);
-  const prevCol = useRef(3);
-  const prevGesture = useRef("none");
-  const prevBlastR = useRef<number | null>(null);
-  const prevBlastC = useRef<number | null>(null);
-
+  // Publish what the toolbar and board render; handInput drops unchanged views.
   useEffect(() => {
-    const blastR = handTracking.blastCursor?.[0] ?? null;
-    const blastC = handTracking.blastCursor?.[1] ?? null;
-    if (
-      prevTracking.current !== handTracking.isTracking ||
-      prevLoading.current !== handTracking.isLoading ||
-      prevError.current !== handTracking.error ||
-      prevCol.current !== handTracking.selectedCol ||
-      prevGesture.current !== handTracking.gesture ||
-      prevBlastR.current !== blastR ||
-      prevBlastC.current !== blastC
-    ) {
-      prevTracking.current = handTracking.isTracking;
-      prevLoading.current = handTracking.isLoading;
-      prevError.current = handTracking.error;
-      prevCol.current = handTracking.selectedCol;
-      prevGesture.current = handTracking.gesture;
-      prevBlastR.current = blastR;
-      prevBlastC.current = blastC;
-      cbRef.current(handTracking);
-    }
+    publishHandInput(handTracking);
   });
+
+  // Register start/stop for the toolbar toggle; unregistering resets the published views.
+  const controlsRef = useRef(handTracking);
+  controlsRef.current = handTracking;
+  useEffect(
+    () => registerHandControls({
+      start: () => controlsRef.current.start(),
+      stop: () => controlsRef.current.stop(),
+    }),
+    [],
+  );
 
   return (
     <AnimatePresence>
@@ -82,10 +64,10 @@ export default function DesktopHandTracking({
           tracking={handTracking}
           blastMode={blastMode}
           currentPlayer={currentPlayer}
-          soundEnabled={soundEnabled}
           onDrop={onDrop}
           onAutoBlast={onAutoBlast}
           onRematch={onRematch}
+          onHover={onHover}
           disabled={disabled}
           winner={winner}
           board={board}
