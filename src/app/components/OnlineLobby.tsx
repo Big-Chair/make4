@@ -9,15 +9,19 @@ import { FigmaLogo, GridDots, DiamondShape, CrossShape } from "./FigmaDecoration
 import Make4Logo from "../../imports/Make4Logo";
 import { TokenCustomizer } from "./TokenCustomizer";
 import { type TokenConfig, DEFAULT_TOKEN_RED, getTokenVisuals, getSlotToken, save as saveToken } from "./tokens";
-import { colorFor, type Role } from "./room";
+import type { RoomLobby } from "./room";
 import type { UseRoomReturn } from "./useRoom";
 import type { SiteStats } from "./api";
 import { QRCodeSVG } from "qrcode.react";
 import { g } from "./ThemeContext";
 
 interface OnlineLobbyProps {
-  /** The owning Room Module. The lobby renders its state and issues its commands. */
-  room: UseRoomReturn;
+  /** The Room's lobby projection — everything the lobby renders. */
+  lobby: RoomLobby;
+  onCreate: UseRoomReturn["create"];
+  onJoin: UseRoomReturn["join"];
+  onLeave: UseRoomReturn["leave"];
+  onTokenChange: UseRoomReturn["updateLocalToken"];
   initialRoomCode?: string | null;
   siteStats?: SiteStats | null;
   onBack: () => void;
@@ -25,7 +29,7 @@ interface OnlineLobbyProps {
 
 type LobbyView = "choose" | "join" | "waiting";
 
-export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: OnlineLobbyProps) {
+export function OnlineLobby({ lobby, onCreate, onJoin, onLeave, onTokenChange, initialRoomCode, siteStats, onBack }: OnlineLobbyProps) {
   // If we have an initial room code from a shared link, start in "join" view
   const [view, setView] = useState<LobbyView>(initialRoomCode ? "join" : "choose");
   const [playerName, setPlayerName] = useState(() => {
@@ -43,20 +47,10 @@ export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: Online
   // ── Everything below is rendered from Room state ──
   // No readiness effect, no startup delay, no Role-to-player assembly: the Room
   // Module decides when a Ready Room exists and App starts the Match from it.
-  const state = room.state;
-  const phase = state.phase;
-  const roomRecord =
-    state.phase === "waiting" || state.phase === "synchronizing" ? state.room : null;
-  const roomError = state.phase === "failed" ? state.error.message : null;
-  const localRole: Role | null =
-    state.phase === "synchronizing"
-      ? state.role
-      : state.phase === "ready"
-        ? state.room.role
-        : null;
-  const localColor = localRole ? colorFor(localRole) : "red";
-  // A live Room (waiting for a guest, or synchronizing into a Ready Room) owns the view.
-  const effectiveView: LobbyView = roomRecord ? "waiting" : view;
+  const { pending, openRoom, error: roomError, color: localColor } = lobby;
+  const synchronizing = openRoom?.synchronizing ?? false;
+  // An open Room (waiting for a guest, or synchronizing into a Ready Room) owns the view.
+  const effectiveView: LobbyView = openRoom ? "waiting" : view;
 
   const rememberName = (name: string) => {
     try { localStorage.setItem("make4_p1Name", name); } catch { /* ignore */ }
@@ -65,18 +59,18 @@ export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: Online
   const handleCreateRoom = async () => {
     const name = playerName.trim() || "Player 1";
     rememberName(name);
-    await room.create({ hostName: name, timerDuration: 40, token: playerToken });
+    await onCreate({ hostName: name, timerDuration: 40, token: playerToken });
   };
 
   const handleJoinRoom = async () => {
     const name = playerName.trim() || "Player 2";
     rememberName(name);
-    await room.join({ code: joinCode, guestName: name, token: playerToken });
+    await onJoin({ code: joinCode, guestName: name, token: playerToken });
   };
 
   const copyLink = () => {
-    if (!roomRecord) return;
-    const link = `${window.location.origin}${window.location.pathname}?room=${roomRecord.code}`;
+    if (!openRoom) return;
+    const link = `${window.location.origin}${window.location.pathname}?room=${openRoom.code}`;
     navigator.clipboard.writeText(link).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -84,8 +78,8 @@ export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: Online
   };
 
   const copyCode = () => {
-    if (!roomRecord) return;
-    navigator.clipboard.writeText(roomRecord.code).then(() => {
+    if (!openRoom) return;
+    navigator.clipboard.writeText(openRoom.code).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -152,7 +146,7 @@ export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: Online
 
         {/* Back button */}
         <button
-          onClick={() => { void room.leave(); onBack(); }}
+          onClick={() => { void onLeave(); onBack(); }}
           className="absolute top-0 left-6 cursor-pointer px-3 py-1.5 rounded-lg text-sm bg-g-surface border border-g-border text-g-text-muted"
         >
           Back
@@ -208,15 +202,15 @@ export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: Online
                 whileHover={{ scale: 1.02, y: -1 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={handleCreateRoom}
-                disabled={phase === "creating"}
+                disabled={pending === "create"}
                 className="w-full py-4 rounded-2xl cursor-pointer flex items-center justify-center gap-3 text-white text-base font-semibold border-none"
                 style={{
                   background: "linear-gradient(135deg, #1ABCFE, #0E9BD8)",
                   boxShadow: "0 4px 30px rgba(26,188,254,0.3)",
-                  opacity: phase === "creating" ? 0.7 : 1,
+                  opacity: pending === "create" ? 0.7 : 1,
                 }}
               >
-                {phase === "creating" ? (
+                {pending === "create" ? (
                   <Loader2 size={18} className="animate-spin" />
                 ) : (
                   <>
@@ -258,16 +252,16 @@ export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: Online
                   onClick={handleJoinRoom}
                   onMouseEnter={() => arrowRef.current?.startAnimation()}
                   onMouseLeave={() => arrowRef.current?.stopAnimation()}
-                  disabled={joinCode.length < 4 || phase === "joining"}
+                  disabled={joinCode.length < 4 || pending === "join"}
                   className="px-5 py-3 rounded-xl cursor-pointer flex items-center gap-2 text-base font-medium"
                   style={{
                     background: joinCode.length >= 4 ? g.surfaceHover : g.surfaceFaint,
                     border: joinCode.length >= 4 ? `1px solid ${g.borderHover}` : `1px solid ${g.borderLight}`,
                     color: joinCode.length >= 4 ? g.text : g.textDim,
-                    opacity: phase === "joining" ? 0.7 : 1,
+                    opacity: pending === "join" ? 0.7 : 1,
                   }}
                 >
-                  {phase === "joining" ? (
+                  {pending === "join" ? (
                     <Loader2 size={16} className="animate-spin" />
                   ) : (
                     <>
@@ -467,15 +461,15 @@ export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: Online
                 onClick={handleJoinRoom}
                 onMouseEnter={() => arrowRef.current?.startAnimation()}
                 onMouseLeave={() => arrowRef.current?.stopAnimation()}
-                disabled={phase === "joining"}
+                disabled={pending === "join"}
                 className="w-full py-4 rounded-2xl cursor-pointer flex items-center justify-center gap-3 text-white text-base font-semibold border-none"
                 style={{
                   background: "linear-gradient(135deg, #0ACF83, #07A868)",
                   boxShadow: "0 4px 30px rgba(10,207,131,0.3)",
-                  opacity: phase === "joining" ? 0.7 : 1,
+                  opacity: pending === "join" ? 0.7 : 1,
                 }}
               >
-                {phase === "joining" ? (
+                {pending === "join" ? (
                   <Loader2 size={18} className="animate-spin" />
                 ) : (
                   <>
@@ -507,7 +501,7 @@ export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: Online
           )}
 
           {/* ─── Waiting for opponent ─── */}
-          {effectiveView === "waiting" && roomRecord && (
+          {effectiveView === "waiting" && openRoom && (
             <motion.div
               key="waiting"
               initial={{ opacity: 0, y: 10 }}
@@ -526,7 +520,7 @@ export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: Online
                     className="tracking-[8px] select-all text-4xl font-bold text-figma-blue font-mono"
                     style={{ textShadow: "0 0 20px rgba(26,188,254,0.3)" }}
                   >
-                    {roomRecord.code}
+                    {openRoom.code}
                   </span>
                 </div>
 
@@ -573,7 +567,7 @@ export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: Online
                     }}
                   >
                     <QRCodeSVG
-                      value={`${window.location.origin}${window.location.pathname}?room=${roomRecord.code}`}
+                      value={`${window.location.origin}${window.location.pathname}?room=${openRoom.code}`}
                       size={140}
                       level="M"
                       bgColor="white"
@@ -604,12 +598,12 @@ export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: Online
                   <Loader2 size={24} className="text-figma-blue" />
                 </motion.div>
                 <p className="text-g-text-muted text-base">
-                  {phase === "synchronizing"
+                  {synchronizing
                     ? "Getting the board ready..."
                     : "Waiting for opponent to join..."}
                 </p>
                 <p className="text-g-text-dim text-sm">
-                  {phase === "synchronizing"
+                  {synchronizing
                     ? "Both players are connecting to the room"
                     : "Share the room code or link with your friend"}
                 </p>
@@ -628,7 +622,7 @@ export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: Online
               </div>
 
               {/* Connected indicator */}
-              {phase === "synchronizing" && (
+              {synchronizing && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
@@ -643,7 +637,7 @@ export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: Online
 
               {/* Cancel button */}
               <button
-                onClick={() => { void room.leave(); setView("choose"); }}
+                onClick={() => { void onLeave(); setView("choose"); }}
                 className="cursor-pointer px-4 py-2 rounded-lg text-sm bg-g-surface-faint border border-g-border-light text-g-text-faint"
               >
                 Cancel
@@ -745,7 +739,7 @@ export function OnlineLobby({ room, initialRoomCode, siteStats, onBack }: Online
           // Lobby edits stay local-only (no server sync) to preserve prior behavior
           saveToken(playerName, config, { slot: "p1", toServer: false });
           // Cosmetic, non-blocking: the Room broadcasts and reconciles it.
-          room.updateLocalToken(config);
+          onTokenChange(config);
         }}
       />
     </div>

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReadyRoom, RoomState } from "./room";
-import { RoomStatusOverlay, roomNoticeFor } from "./RoomStatusOverlay";
+import { roomNoticeFor, type ReadyRoom, type RoomState } from "./room";
+import { RoomStatusOverlay } from "./RoomStatusOverlay";
 
 const ROOM: ReadyRoom = {
   code: "ABCD",

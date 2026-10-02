@@ -8,29 +8,39 @@
  * Adapter with no Supabase involved.
  *
  * Payloads are passed through raw — decoding happens in the Room Module against
- * the decoders in `room.ts`.
+ * the decoders in `room.ts`. The HTTP Room DTO is the exception: it is translated
+ * into Room vocabulary here, at the edge, and never travels past the Adapter.
  */
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "./supabaseClient";
-import { createRoom, joinRoom, fetchRoom, type Room as RoomRecord } from "./api";
+import { createRoom, joinRoom, fetchRoom, type Result, type Room as RoomDto } from "./api";
 import type {
   OpenChannelInput,
   RoomAdapter,
-  RoomApiResult,
   RoomChannel,
   RoomPresence,
   RoomMessage,
+  RoomRecord,
 } from "./room";
-import type { Result } from "./api";
 
 /** One Broadcast event carries every Room/Match message; the decoder discriminates. */
 const ROOM_EVENT = "room_message";
 
 const channelName = (code: string) => `make4-room-${code}`;
 
-function toApiResult<T>(res: Result<T>): RoomApiResult<T> {
-  if (res.ok) return { ok: true, data: res.data };
-  return { ok: false, error: { status: res.error.status, message: res.error.message } };
+function toRoomRecord(dto: RoomDto): RoomRecord {
+  return {
+    code: dto.code,
+    hostName: dto.hostName,
+    guestName: dto.guestName,
+    timerDuration: dto.timerDuration,
+    blastTokens: dto.blastTokens,
+    status: dto.status,
+  };
+}
+
+function toRoomResult(res: Result<RoomDto>): Result<RoomRecord> {
+  return res.ok ? { ok: true, data: toRoomRecord(res.data) } : res;
 }
 
 /** A fresh identity. A page reload builds a new Room Module and so a new one,
@@ -47,15 +57,15 @@ const ACTIVE_ROOM_KEY = "make4_active_room";
 
 export const supabaseRoomAdapter: RoomAdapter = {
   async createRoom({ hostName, timerDuration, blastTokens = true }) {
-    return toApiResult(await createRoom(hostName, timerDuration, blastTokens));
+    return toRoomResult(await createRoom(hostName, timerDuration, blastTokens));
   },
 
   async joinRoom({ code, guestName }) {
-    return toApiResult(await joinRoom(code, guestName));
+    return toRoomResult(await joinRoom(code, guestName));
   },
 
   async fetchRoom(code: string) {
-    return toApiResult<RoomRecord>(await fetchRoom(code));
+    return toRoomResult(await fetchRoom(code));
   },
 
   openChannel({ code, clientId, onStatus, onPresence, onMessage }: OpenChannelInput): RoomChannel {

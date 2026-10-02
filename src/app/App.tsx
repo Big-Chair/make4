@@ -8,9 +8,7 @@ import { recordGame, fetchStats, recordVisit, type SiteStats } from "./component
 import { save as saveToken, type TokenConfig } from "./components/tokens";
 import { OnlineLobby } from "./components/OnlineLobby";
 import { useRoom } from "./components/useRoom";
-import { matchRoomOf } from "./components/room";
 import { persistsMatchResult } from "./components/matchResult";
-import { roomNoticeFor } from "./components/RoomStatusOverlay";
 import { ThemeProvider } from "./components/ThemeContext";
 
 export interface Scoreboard {
@@ -31,8 +29,8 @@ export function GameApp() {
   const [score, setScore] = useState<Scoreboard>({ red: 0, yellow: 0, draws: 0 });
   const [player1Name, setPlayer1Name] = useState("");
   const [player2Name, setPlayer2Name] = useState("");
-  const [timerDuration, setTimerDuration] = useState(40);
-  const [blastTokens, setBlastTokens] = useState(true);
+  /** Local and bot only; an online Match takes its timer from the Room. */
+  const [localTimerDuration, setLocalTimerDuration] = useState(40);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [lastPlayerName, setLastPlayerName] = useState("");
   const [p1Token, setP1Token] = useState<TokenConfig>({ type: "default" });
@@ -40,31 +38,29 @@ export function GameApp() {
   const [initialRoomCode, setInitialRoomCode] = useState<string | null>(null);
   const [siteStats, setSiteStats] = useState<SiteStats | null>(null);
 
-  // The owning Room Module. An online Match starts from a Ready Room and nothing else.
+  // The owning Room Module. An online Match starts from its Match input and
+  // nothing else: Role, participants, timer, and Blast-token setting.
   const room = useRoom();
-  const readyRoom = room.state.phase === "ready" ? room.state.room : null;
-  const activeRoom = matchRoomOf(room.state);
+  const onlineMatch = gameMode === "online" ? room.match : null;
+  const timerDuration = onlineMatch ? onlineMatch.timerDuration : localTimerDuration;
+  const blastTokens = onlineMatch ? onlineMatch.blastTokens : true;
 
-  // Start the online Match the moment a Ready Room exists — no fixed delay, no
+  // Start the online Match the moment the Room is ready — no fixed delay, no
   // Role-to-player assembly in the lobby.
+  const readyMatch = room.match?.live ? room.match : null;
   useEffect(() => {
-    if (!readyRoom || screen !== "lobby") return;
-    const myName =
-      readyRoom.role === "host"
-        ? readyRoom.participants.red.name
-        : readyRoom.participants.yellow.name;
+    if (!readyMatch || screen !== "lobby") return;
+    const { role, participants } = readyMatch;
     setGameMode("online");
-    setTimerDuration(readyRoom.timerDuration);
-    setBlastTokens(readyRoom.blastTokens);
-    setLastPlayerName(myName);
+    setLastPlayerName(role === "host" ? participants.red.name : participants.yellow.name);
     setInitialRoomCode(null);
     startTransition(() => setScreen("game"));
-  }, [readyRoom, screen]);
+  }, [readyMatch, screen]);
 
   // A Room Module that starts failed has refused to recover a Match from before a
   // page reload; show that refusal in the lobby instead of silently starting over.
   useEffect(() => {
-    if (room.state.phase !== "failed") return;
+    if (room.lobby.error === null) return;
     setGameMode("online");
     setScreen("lobby");
     // Mount only: a later failure belongs to the screen it happens on.
@@ -124,20 +120,19 @@ export function GameApp() {
     setPlayer1Name(p1 || "Player 1");
     setPlayer2Name(mode === "bot" ? `Bot (${diff || "medium"})` : (p2 || "Player 2"));
     setLastPlayerName(p1 || "Player 1");
-    if (timer !== undefined) setTimerDuration(timer);
-    setBlastTokens(true);
+    if (timer !== undefined) setLocalTimerDuration(timer);
     if (sound !== undefined) setSoundEnabled(sound);
     if (p1Tok) setP1Token(p1Tok);
     if (p2Tok) setP2Token(p2Tok);
     startTransition(() => setScreen("game"));
   };
 
-  // Online participants come from the Ready Room projection, so a Player Token
+  // Online participants come from the Room's Match input, so a Player Token
   // that arrives (or changes) after the Match starts updates live.
-  const p1Name = activeRoom ? activeRoom.participants.red.name : player1Name;
-  const p2Name = activeRoom ? activeRoom.participants.yellow.name : player2Name;
-  const p1TokenEffective = activeRoom ? activeRoom.participants.red.token : p1Token;
-  const p2TokenEffective = activeRoom ? activeRoom.participants.yellow.token : p2Token;
+  const p1Name = onlineMatch ? onlineMatch.participants.red.name : player1Name;
+  const p2Name = onlineMatch ? onlineMatch.participants.yellow.name : player2Name;
+  const p1TokenEffective = onlineMatch ? onlineMatch.participants.red.token : p1Token;
+  const p2TokenEffective = onlineMatch ? onlineMatch.participants.yellow.token : p2Token;
 
   const handleGameEnd = async (winner: "red" | "yellow" | "draw") => {
     setScore((prev) => ({
@@ -147,7 +142,7 @@ export function GameApp() {
 
     // Both peers keep local score; only a timed Match persists, and online only
     // the host of a live Room — a no-contest Room never records a result.
-    if (persistsMatchResult({ gameMode, timerDuration, room: room.state })) {
+    if (persistsMatchResult({ gameMode, timerDuration, room: onlineMatch })) {
       const mappedWinner = winner === "red" ? "player1" : winner === "yellow" ? "player2" : "draw";
       await recordGame(p1Name, p2Name, mappedWinner, gameMode, timerDuration);
     }
@@ -158,14 +153,14 @@ export function GameApp() {
   const handleP1TokenChange = useCallback((config: TokenConfig) => {
     setP1Token(config);
     if (p1Name) saveToken(p1Name, config);
-    if (activeRoom?.role === "host") room.updateLocalToken(config);
-  }, [p1Name, activeRoom, room]);
+    if (onlineMatch?.role === "host") room.updateLocalToken(config);
+  }, [p1Name, onlineMatch, room]);
 
   const handleP2TokenChange = useCallback((config: TokenConfig) => {
     setP2Token(config);
     if (p2Name) saveToken(p2Name, config);
-    if (activeRoom?.role === "guest") room.updateLocalToken(config);
-  }, [p2Name, activeRoom, room]);
+    if (onlineMatch?.role === "guest") room.updateLocalToken(config);
+  }, [p2Name, onlineMatch, room]);
 
   return (
     <ThemeProvider>
@@ -180,7 +175,11 @@ export function GameApp() {
         />
       ) : screen === "lobby" ? (
         <OnlineLobby
-          room={room}
+          lobby={room.lobby}
+          onCreate={room.create}
+          onJoin={room.join}
+          onLeave={room.leave}
+          onTokenChange={room.updateLocalToken}
           initialRoomCode={initialRoomCode}
           siteStats={siteStats}
           onBack={() => { setInitialRoomCode(null); setScreen("start"); }}
@@ -203,13 +202,13 @@ export function GameApp() {
             setPlayer2Name(`Bot (${d})`);
             // Adjust timer per difficulty: Hard=30s, Medium=35s, Easy=40s
             const DIFFICULTY_TIMER: Record<string, number> = { easy: 40, medium: 35, hard: 30 };
-            if (timerDuration > 0) setTimerDuration(DIFFICULTY_TIMER[d] ?? 40);
+            if (localTimerDuration > 0) setLocalTimerDuration(DIFFICULTY_TIMER[d] ?? 40);
           }}
           p1Token={p1TokenEffective}
           p2Token={p2TokenEffective}
-          transport={gameMode === "online" ? room.matchTransport ?? undefined : undefined}
-          role={gameMode === "online" ? activeRoom?.role : undefined}
-          roomNotice={gameMode === "online" ? roomNoticeFor(room.state) : null}
+          transport={onlineMatch?.transport ?? undefined}
+          role={onlineMatch?.role}
+          roomNotice={onlineMatch?.notice ?? null}
           onP1TokenChange={handleP1TokenChange}
           onP2TokenChange={handleP2TokenChange}
         />

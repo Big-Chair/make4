@@ -10,24 +10,9 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { Home, Loader2, WifiOff } from "lucide-react";
-import type { InterruptReason, RoomState } from "./room";
+import type { RoomNotice } from "./room";
 
-export type RoomNotice =
-  | { kind: "interrupted"; reason: InterruptReason; reconnectDeadline: number; resynchronizing: boolean }
-  | { kind: "no-contest"; message: string };
-
-export function roomNoticeFor(state: RoomState): RoomNotice | null {
-  if (state.phase === "interrupted") {
-    return {
-      kind: "interrupted",
-      reason: state.reason,
-      reconnectDeadline: state.reconnectDeadline,
-      resynchronizing: state.resynchronizing,
-    };
-  }
-  if (state.phase === "failed") return { kind: "no-contest", message: state.error.message };
-  return null;
-}
+export type { RoomNotice };
 
 function useSecondsUntil(deadline: number | null): number {
   const remaining = () => (deadline === null ? 0 : Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
