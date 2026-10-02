@@ -90,6 +90,17 @@ export type RoomState =
     }
   | { phase: "failed"; error: RoomFailure; previousRoom?: ReadyRoom };
 
+/**
+ * The Ready Room an online Match renders: the live one (also while interrupted),
+ * or the last one if the Room failed — so a failure never blanks out the players
+ * or changes which Role this player holds.
+ */
+export function matchRoomOf(state: RoomState): ReadyRoom | null {
+  if (state.phase === "ready" || state.phase === "interrupted") return state.room;
+  if (state.phase === "failed") return state.previousRoom ?? null;
+  return null;
+}
+
 /** Why a Ready Room stopped accepting Match input. */
 export type InterruptReason = "peer-left" | "channel-lost" | "revision-gap";
 

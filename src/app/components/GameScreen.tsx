@@ -13,7 +13,7 @@ import { LeaderboardDrawer } from "./LeaderboardDrawer";
 import { viewingPlayerName } from "./leaderboardQuery";
 import { TokenCustomizer } from "./TokenCustomizer";
 import { type TokenConfig, DEFAULT_PALETTE } from "./tokens";
-import type { OnlineMatchTransport } from "./room";
+import type { OnlineMatchTransport, Role } from "./room";
 import { RoomStatusOverlay, type RoomNotice } from "./RoomStatusOverlay";
 import { useMatch } from "./useMatch";
 import { setSfxVolume } from "./useSoundEffects";
@@ -33,6 +33,8 @@ interface GameScreenProps {
   player1Name: string;
   player2Name: string;
   timerDuration: number;
+  /** Whether each player gets a Blast Token. Default true. */
+  blastTokens?: boolean;
   soundEnabled: boolean;
   onSoundToggle: () => void;
   onDifficultyChange?: (d: Difficulty) => void;
@@ -40,18 +42,20 @@ interface GameScreenProps {
   p2Token?: TokenConfig;
   /** The Room's Match seam when this Match is online. */
   transport?: OnlineMatchTransport;
+  /** The Role this player holds when this Match is online — kept after the Room fails. */
+  role?: Role;
   /** Why an online Match is paused or has ended as no contest; null while ready. */
   roomNotice?: RoomNotice | null;
   onP1TokenChange?: (config: TokenConfig) => void;
   onP2TokenChange?: (config: TokenConfig) => void;
 }
 
-export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, player1Name, player2Name, timerDuration, soundEnabled, onSoundToggle, onDifficultyChange, p1Token, p2Token, transport, roomNotice = null, onP1TokenChange, onP2TokenChange }: GameScreenProps) {
+export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, player1Name, player2Name, timerDuration, blastTokens = true, soundEnabled, onSoundToggle, onDifficultyChange, p1Token, p2Token, transport, role, roomNotice = null, onP1TokenChange, onP2TokenChange }: GameScreenProps) {
   const isMobile = useIsMobile();
 
   // The deep move pipeline: board state, turn legality, AI, online sync, countdown,
   // winner recording — all behind four verbs (drop / blast / autoBlast / reset).
-  const match = useMatch({ gameMode, difficulty, timerDuration, soundEnabled, transport, onGameEnd });
+  const match = useMatch({ gameMode, difficulty, timerDuration, blastTokens, soundEnabled, transport, role, onGameEnd });
 
   // Camera status for the toolbar toggle, read from the hand-tracking input.
   const handCamera = useHandCamera();
@@ -534,7 +538,7 @@ export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, pla
       <LeaderboardDrawer
         isOpen={leaderboardOpen}
         onClose={() => setLeaderboardOpen(false)}
-        viewingPlayerName={viewingPlayerName({ role: transport?.role, player1Name, player2Name })}
+        viewingPlayerName={viewingPlayerName({ role, player1Name, player2Name })}
       />
 
       {/* Token Customizer */}

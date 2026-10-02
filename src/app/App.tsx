@@ -8,6 +8,7 @@ import { recordGame, fetchStats, recordVisit, type SiteStats } from "./component
 import { save as saveToken, type TokenConfig } from "./components/tokens";
 import { OnlineLobby } from "./components/OnlineLobby";
 import { useRoom } from "./components/useRoom";
+import { matchRoomOf } from "./components/room";
 import { persistsMatchResult } from "./components/matchResult";
 import { roomNoticeFor } from "./components/RoomStatusOverlay";
 import { ThemeProvider } from "./components/ThemeContext";
@@ -31,6 +32,7 @@ export function GameApp() {
   const [player1Name, setPlayer1Name] = useState("");
   const [player2Name, setPlayer2Name] = useState("");
   const [timerDuration, setTimerDuration] = useState(40);
+  const [blastTokens, setBlastTokens] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [lastPlayerName, setLastPlayerName] = useState("");
   const [p1Token, setP1Token] = useState<TokenConfig>({ type: "default" });
@@ -41,13 +43,7 @@ export function GameApp() {
   // The owning Room Module. An online Match starts from a Ready Room and nothing else.
   const room = useRoom();
   const readyRoom = room.state.phase === "ready" ? room.state.room : null;
-  // What the Match renders: the Ready Room (also while interrupted for
-  // resynchronization), or the last one if the Room failed — neither may blank
-  // out the players mid-Match.
-  const liveRoom =
-    room.state.phase === "ready" || room.state.phase === "interrupted" ? room.state.room : null;
-  const activeRoom =
-    liveRoom ?? (room.state.phase === "failed" ? room.state.previousRoom ?? null : null);
+  const activeRoom = matchRoomOf(room.state);
 
   // Start the online Match the moment a Ready Room exists — no fixed delay, no
   // Role-to-player assembly in the lobby.
@@ -59,6 +55,7 @@ export function GameApp() {
         : readyRoom.participants.yellow.name;
     setGameMode("online");
     setTimerDuration(readyRoom.timerDuration);
+    setBlastTokens(readyRoom.blastTokens);
     setLastPlayerName(myName);
     setInitialRoomCode(null);
     startTransition(() => setScreen("game"));
@@ -128,6 +125,7 @@ export function GameApp() {
     setPlayer2Name(mode === "bot" ? `Bot (${diff || "medium"})` : (p2 || "Player 2"));
     setLastPlayerName(p1 || "Player 1");
     if (timer !== undefined) setTimerDuration(timer);
+    setBlastTokens(true);
     if (sound !== undefined) setSoundEnabled(sound);
     if (p1Tok) setP1Token(p1Tok);
     if (p2Tok) setP2Token(p2Tok);
@@ -197,6 +195,7 @@ export function GameApp() {
           player1Name={p1Name}
           player2Name={p2Name}
           timerDuration={timerDuration}
+          blastTokens={blastTokens}
           soundEnabled={soundEnabled}
           onSoundToggle={() => setSoundEnabled((s) => !s)}
           onDifficultyChange={(d) => {
@@ -209,6 +208,7 @@ export function GameApp() {
           p1Token={p1TokenEffective}
           p2Token={p2TokenEffective}
           transport={gameMode === "online" ? room.matchTransport ?? undefined : undefined}
+          role={gameMode === "online" ? activeRoom?.role : undefined}
           roomNotice={gameMode === "online" ? roomNoticeFor(room.state) : null}
           onP1TokenChange={handleP1TokenChange}
           onP2TokenChange={handleP2TokenChange}

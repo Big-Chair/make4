@@ -7,7 +7,7 @@ import {
 import { findBestBlastTarget } from "./blast";
 import { getBestMove, getBestBlastMove, type Difficulty } from "./connect4AI";
 import type { GameMode } from "./StartScreen";
-import type { OnlineMatchTransport } from "./room";
+import type { OnlineMatchTransport, Role } from "./room";
 import { colorFor } from "./room";
 import {
   OPENING_MATCH_ID,
@@ -67,9 +67,13 @@ export interface UseMatchOptions {
   gameMode: GameMode;
   difficulty: Difficulty;
   timerDuration: number;
+  /** Whether each player gets a Blast Token (online: the Room's persisted setting). Default true. */
+  blastTokens?: boolean;
   soundEnabled: boolean;
   /** The Room's Match seam. Stable for one Room generation. */
   transport?: OnlineMatchTransport;
+  /** The Role this player holds online. Outlives the transport, which is gone once the Room fails. */
+  role?: Role;
   onGameEnd: (winner: "red" | "yellow" | "draw") => void;
 }
 
@@ -121,11 +125,13 @@ export function useMatch({
   gameMode,
   difficulty,
   timerDuration,
+  blastTokens = true,
   soundEnabled,
   transport,
+  role,
   onGameEnd,
 }: UseMatchOptions): UseMatchReturn {
-  const game = useConnect4(timerDuration);
+  const game = useConnect4({ timerDuration, blastTokens });
 
   const [blastMode, setBlastMode] = useState(false);
   const [botThinking, setBotThinking] = useState(false);
@@ -139,7 +145,7 @@ export function useMatch({
   const winnerOverlayTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Online: which color this player controls + whose turn it is
-  const myColor = colorFor(transport?.role ?? "host");
+  const myColor = colorFor(role ?? "host");
   const isMyTurn = gameMode !== "online" || game.currentPlayer === myColor;
   // Online input and clocks run only while the Room's Match transport is ready.
   const onlinePaused = gameMode === "online" && transport?.status !== "ready";

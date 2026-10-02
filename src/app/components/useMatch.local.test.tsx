@@ -144,6 +144,34 @@ describe("useMatch verbs (local and bot)", () => {
     expect(playBlast).not.toHaveBeenCalled();
     expect(result.current.blastMode).toBe(true);
   });
+
+  it("a Match configured without Blast Tokens refuses every blast, including after a rematch", async () => {
+    const { result } = renderHook(() =>
+      useMatch({
+        gameMode: "local",
+        difficulty: "easy",
+        timerDuration: 0,
+        blastTokens: false,
+        soundEnabled: true,
+        onGameEnd: () => {},
+      }),
+    );
+    await finishCountdown();
+    expect(result.current.redBlastToken).toBe(false);
+    expect(result.current.yellowBlastToken).toBe(false);
+
+    act(() => void result.current.drop(3));
+    let applied = true;
+    act(() => {
+      applied = result.current.blast(5, 3);
+    });
+    expect(applied).toBe(false);
+
+    act(() => result.current.reset());
+    await finishCountdown();
+    expect(result.current.redBlastToken).toBe(false);
+    expect(result.current.yellowBlastToken).toBe(false);
+  });
 });
 
 describe("useMatch hover cue", () => {
