@@ -494,7 +494,7 @@ describe("failures", () => {
 
     expect(result.current.state.phase).toBe("synchronizing");
     expect(phases).not.toContain("ready");
-    expect(result.current.matchTransport).toBeNull();
+    expect(result.current.match?.transport ?? null).toBeNull();
   });
 });
 
