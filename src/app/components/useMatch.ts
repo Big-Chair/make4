@@ -56,8 +56,9 @@ import {
  * Online play goes through the Match sync module (`matchSync.ts`), which owns
  * the wire: revisions, envelopes, duplicate detection, the Match Snapshot
  * handshake, and rematch legality. This hook speaks to it only in actions — it
- * plays and applies Drops and Blasts, starts a rematch under the identity the
- * sync gives it, and restores a snapshot — and never builds a message.
+ * plays and applies Drops, Blasts and Timeouts, starts a rematch under the
+ * identity the sync gives it, and restores a snapshot — and never builds a
+ * message. Online, only the player whose turn it is times it out.
  *
  * Online, `reset` is a rematch: refused until the Match is decided, so no peer
  * can reset a Match in progress.
@@ -167,9 +168,10 @@ export function useMatch({
     }
   }, []);
 
-  /** Apply a Drop or Blast for the current player. False when the rules reject it. */
+  /** Apply a Drop, Blast or Timeout for the current player. False when the rules reject it. */
   const applyAction = useCallback((action: MatchAction) => {
     const liveGame = gameRef.current;
+    if (action.type === "timeout") return liveGame.timeoutTurn();
     return action.type === "drop"
       ? liveGame.dropPiece(action.col)
       : liveGame.blastPiece(action.row, action.col);
@@ -214,7 +216,7 @@ export function useMatch({
           // The local human's moves sound from the board UI; the opponent's sound here.
           if (byOpponent && soundRef.current) {
             if (action.type === "drop") playDrop();
-            else playBlast();
+            else if (action.type === "blast") playBlast();
           }
           return true;
         },
@@ -245,6 +247,20 @@ export function useMatch({
   useEffect(() => {
     game.setPaused(countdown > 0 || onlinePaused);
   }, [countdown, onlinePaused]);
+
+  // The turn clock ran out: the player whose turn it is plays a Timeout. Online
+  // only this peer's own turn times out here; the peer's clock is display only,
+  // waiting at zero for the broadcast Timeout (or move) to pass the turn.
+  const clockExpired =
+    game.timerEnabled && game.timer === 0 && !game.winner && countdown === 0 && !onlinePaused;
+  useEffect(() => {
+    if (!clockExpired) return;
+    if (gameMode === "online") {
+      if (gameRef.current.currentPlayer === myColor) syncRef.current?.play({ type: "timeout" });
+    } else {
+      gameRef.current.timeoutTurn();
+    }
+  }, [clockExpired, game.currentPlayer, gameMode, myColor]);
 
   // Tick the countdown
   useEffect(() => {

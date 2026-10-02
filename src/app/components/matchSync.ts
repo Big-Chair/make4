@@ -11,9 +11,11 @@
  * never sees an envelope. The Room carries these messages opaquely over the
  * `OnlineMatchTransport`.
  *
- * Revisions: each successfully applied local Drop or Blast advances the revision
- * and is broadcast with it; rejected ones do neither. An incoming action applies
- * only at exactly revision + 1 on the opponent's turn. Anything else — missing,
+ * Revisions: each successfully applied local Drop, Blast or Timeout advances the
+ * revision and is broadcast with it; rejected ones do neither. A turn ends on the
+ * clock only through a Timeout from the player whose turn it is, so the peer's
+ * clock never moves the turn and every turn change has a revision. An incoming
+ * action applies only at exactly revision + 1 on the opponent's turn. Anything else — missing,
  * duplicate, out of order, out of turn, or unplayable — interrupts the Room, and
  * the host's authoritative Match Snapshot repairs it: the guest requests it (or
  * the host pushes it when the host saw the gap), the guest restores it and
@@ -55,7 +57,12 @@ export function nextMatchId(matchId: string): string {
 
 // ─── Wire ───
 
-export type MatchAction = { type: "drop"; col: number } | { type: "blast"; row: number; col: number };
+/** A move. A Timeout passes the turn with no Board change; only the player whose
+ *  turn it is plays it, from their own clock. */
+export type MatchAction =
+  | { type: "drop"; col: number }
+  | { type: "blast"; row: number; col: number }
+  | { type: "timeout" };
 
 type MatchMessageBody =
   | (MatchAction & { revision: number })
@@ -90,6 +97,9 @@ export function decodeMatchMessage(value: unknown): MatchMessage | null {
     case "blast":
       if (!isNumber(value.revision) || !isNumber(value.row) || !isNumber(value.col)) return null;
       return envelope({ type: "blast", revision: value.revision, row: value.row, col: value.col });
+    case "timeout":
+      if (!isNumber(value.revision)) return null;
+      return envelope({ type: "timeout", revision: value.revision });
     case "rematch":
       if (!isMatchId(value.matchId)) return null;
       return envelope({ type: "rematch", matchId: value.matchId });
@@ -115,7 +125,7 @@ export type MatchState = Omit<MatchSnapshot, "protocolVersion" | "matchId" | "re
 /** What the Match offers its sync: its live state and three actions. */
 export interface SyncedMatch {
   read(): MatchState;
-  /** Apply a Drop or Blast for the current player. False when the rules reject it. */
+  /** Apply a Drop, Blast or Timeout for the current player. False when the rules reject it. */
   apply(action: MatchAction): boolean;
   /** Start a fresh Match under `matchId`. */
   rematch(matchId: string): void;
@@ -216,7 +226,7 @@ export function createMatchSync({
     match.rematch(id);
   };
 
-  const receiveAction = (message: Extract<MatchMessage, { type: "drop" | "blast" }>) => {
+  const receiveAction = (message: Extract<MatchMessage, { type: MatchAction["type"] }>) => {
     // Mid-resynchronization, the incoming snapshot supersedes in-flight actions.
     if (transport.status !== "ready") return;
     if (message.revision !== revision + 1 || match.read().currentPlayer !== opponentColor) {
@@ -226,7 +236,9 @@ export function createMatchSync({
     const action: MatchAction =
       message.type === "drop"
         ? { type: "drop", col: message.col }
-        : { type: "blast", row: message.row, col: message.col };
+        : message.type === "blast"
+          ? { type: "blast", row: message.row, col: message.col }
+          : { type: "timeout" };
     if (!match.apply(action)) {
       repairDivergence();
       return;
@@ -299,6 +311,7 @@ export function createMatchSync({
     switch (message.type) {
       case "drop":
       case "blast":
+      case "timeout":
         receiveAction(message);
         return;
       case "rematch":

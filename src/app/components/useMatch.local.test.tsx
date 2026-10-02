@@ -20,12 +20,12 @@ vi.mock("./useSoundEffects", () => ({
   playClick: vi.fn(),
 }));
 
-function renderMatch(gameMode: GameMode) {
+function renderMatch(gameMode: GameMode, { timerDuration = 0 }: { timerDuration?: number } = {}) {
   return renderHook(() =>
     useMatch({
       gameMode,
       difficulty: "easy",
-      timerDuration: 0,
+      timerDuration,
       soundEnabled: true,
       onGameEnd: () => {},
     }),
@@ -44,6 +44,20 @@ async function finishCountdown() {
 describe("useMatch verbs (local and bot)", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+
+  it("passes the turn when the local turn clock runs out", async () => {
+    const { result } = renderMatch("local", { timerDuration: 3 });
+    await finishCountdown();
+
+    for (let i = 0; i < 3; i++) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+    }
+    expect(result.current.currentPlayer).toBe("yellow");
+    expect(result.current.timer).toBe(3);
+    expect(result.current.board.flat().every((cell) => cell === null)).toBe(true);
+  });
 
   it("an applied drop reports it and plays the drop sound", async () => {
     const { result } = renderMatch("local");

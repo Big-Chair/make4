@@ -155,15 +155,10 @@ export function useConnect4(timerDuration: number = 40) {
       if (timerRef.current) clearInterval(timerRef.current);
       return;
     }
+    // The clock only counts down. At zero the Match decides whether to play a
+    // Timeout (`timeoutTurn`); online, the peer's clock just waits at zero.
     timerRef.current = setInterval(() => {
-      setTimer((prev) => {
-        if (prev <= 1) {
-          // Time's up - switch turns
-          setCurrentPlayer((p) => (p === "red" ? "yellow" : "red"));
-          return timerDuration;
-        }
-        return prev - 1;
-      });
+      setTimer((prev) => Math.max(0, prev - 1));
     }, 1000);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
@@ -236,6 +231,14 @@ export function useConnect4(timerDuration: number = 40) {
     [board, currentPlayer, winner, hasBlastToken, resetTimer]
   );
 
+  /** Timeout: the current player's turn passes with no Board change. */
+  const timeoutTurn = useCallback(() => {
+    if (winner) return false;
+    setCurrentPlayer((p) => (p === "red" ? "yellow" : "red"));
+    resetTimer();
+    return true;
+  }, [winner, resetTimer]);
+
   const resetGame = useCallback((startingPlayer?: "red" | "yellow") => {
     setBoard(createEmptyBoard());
     setCurrentPlayer(startingPlayer || "red");
@@ -279,6 +282,7 @@ export function useConnect4(timerDuration: number = 40) {
     winningCells,
     dropPiece,
     blastPiece,
+    timeoutTurn,
     resetGame,
     restore,
     hasBlastToken,

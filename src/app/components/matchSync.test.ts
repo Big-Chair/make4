@@ -127,7 +127,9 @@ function fakeMatch(): SyncedMatch & {
       const { state } = match;
       if (state.winner) return false;
       const board = state.board.map((row) => [...row]);
-      if (action.type === "drop") {
+      if (action.type === "timeout") {
+        // The turn passes with no Board change.
+      } else if (action.type === "drop") {
         const row = board.map((cells) => cells[action.col]).lastIndexOf(null);
         if (row < 0) return false;
         board[row][action.col] = state.currentPlayer;
@@ -187,7 +189,8 @@ function resynchronize(...peers: Peer[]) {
   }
 }
 
-const actions = (p: Peer) => p.transport.sent.filter((m) => m.type === "drop" || m.type === "blast");
+const actions = (p: Peer) =>
+  p.transport.sent.filter((m) => m.type === "drop" || m.type === "blast" || m.type === "timeout");
 
 /** Play Drops alternately until red has four in column 0. */
 async function playRedWin({ host, guest, wire }: ReturnType<typeof pair>) {
@@ -224,6 +227,7 @@ describe("wire envelopes", () => {
     expect(decodeMatchMessage({ protocolVersion: 1, type: "drop", revision: 1, col: "3" })).toBeNull();
     expect(decodeMatchMessage({ protocolVersion: 1, type: "token-sync", token: { type: "default" } })).toBeNull();
     expect(decodeMatchMessage({ protocolVersion: 1, type: "rematch", matchId: "not-a-match" })).toBeNull();
+    expect(decodeMatchMessage({ protocolVersion: 1, type: "timeout" })).toBeNull();
     expect(decodeMatchMessage("junk")).toBeNull();
 
     expect(decodeMatchMessage({ protocolVersion: 1, type: "drop", revision: 1, col: 3 })).toEqual({
@@ -231,6 +235,11 @@ describe("wire envelopes", () => {
       type: "drop",
       revision: 1,
       col: 3,
+    });
+    expect(decodeMatchMessage({ protocolVersion: 1, type: "timeout", revision: 4 })).toEqual({
+      protocolVersion: 1,
+      type: "timeout",
+      revision: 4,
     });
     expect(decodeMatchMessage({ protocolVersion: 1, type: "rematch", matchId: "match-2" })).toEqual({
       protocolVersion: 1,
@@ -321,6 +330,66 @@ describe("revisions", () => {
     guest.transport.receive({ protocolVersion: 1, type: "drop", revision: 1, col: 5 });
     expect(guest.match.applied).toEqual([]);
     expect(guest.sentOfType("snapshot-request")).toHaveLength(0);
+  });
+});
+
+// ─── Timeout ───
+
+describe("timeout", () => {
+  it("broadcasts a Timeout at the next revision, and the peer passes the turn on it", async () => {
+    const { wire, host, guest } = pair();
+
+    expect(host.sync.play({ type: "timeout" })).toBe(true);
+    await wire.flush();
+
+    expect(actions(host)).toEqual([{ protocolVersion: 1, type: "timeout", revision: 1 }]);
+    expect(guest.match.applied).toEqual([{ type: "timeout" }]);
+    expect(guest.match.state.currentPlayer).toBe("yellow");
+
+    // The Timeout took a revision: the guest's next move is revision 2.
+    expect(guest.sync.play({ type: "drop", col: 3 })).toBe(true);
+    await wire.flush();
+    expect(actions(guest)).toEqual([{ protocolVersion: 1, type: "drop", revision: 2, col: 3 }]);
+    expect(host.match.state.board).toEqual(guest.match.state.board);
+    expect(host.transport.status).toBe("ready");
+    expect(guest.transport.status).toBe("ready");
+  });
+
+  it("refuses a Timeout on the opponent's turn or while not ready", () => {
+    const { host, guest } = pair();
+
+    expect(guest.sync.play({ type: "timeout" })).toBe(false);
+    host.transport.status = "interrupted";
+    expect(host.sync.play({ type: "timeout" })).toBe(false);
+
+    expect(actions(host)).toEqual([]);
+    expect(actions(guest)).toEqual([]);
+    expect(host.match.applied).toEqual([]);
+  });
+
+  it.each([
+    ["missing", 3],
+    ["duplicate", 1],
+  ])("interrupts instead of applying a %s Timeout", async (_label, revision) => {
+    const { wire, host, guest } = pair();
+    host.sync.play({ type: "drop", col: 3 });
+    await wire.flush();
+
+    guest.transport.receive({ protocolVersion: 1, type: "timeout", revision });
+
+    expect(guest.match.state.currentPlayer).toBe("yellow");
+    expect(guest.transport.interrupts).toEqual(["revision-gap"]);
+    expect(guest.sentOfType("snapshot-request")).toHaveLength(1);
+  });
+
+  it("interrupts on a Timeout at the right revision that is out of turn", () => {
+    const { host } = pair();
+
+    // Red's turn: only the host may time it out.
+    host.transport.receive({ protocolVersion: 1, type: "timeout", revision: 1 });
+
+    expect(host.transport.interrupts).toEqual(["revision-gap"]);
+    expect(host.match.applied).toEqual([]);
   });
 });
 
