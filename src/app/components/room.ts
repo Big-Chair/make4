@@ -124,9 +124,9 @@ export type InterruptReason = "peer-left" | "channel-lost" | "revision-gap";
 export interface RoomLobby {
   /** A create or join request is in flight. */
   pending: "create" | "join" | null;
-  /** The open Room whose code the lobby shows: waiting for a guest, or both
-   *  joined and synchronizing into a Ready Room. */
-  openRoom: { code: string; synchronizing: boolean } | null;
+  /** The open Room whose code and persisted rules the lobby shows: waiting for
+   *  a guest, or both joined and synchronizing into a Ready Room. */
+  openRoom: { code: string; synchronizing: boolean; timerDuration: number; blastTokens: boolean } | null;
   /** The local player's colour; red until a Role is known. */
   color: "red" | "yellow";
   /** Why the Room failed, or null. */
@@ -175,7 +175,12 @@ export function projectLobby(state: RoomState): RoomLobby {
     pending: state.phase === "creating" ? "create" : state.phase === "joining" ? "join" : null,
     openRoom:
       state.phase === "waiting" || state.phase === "synchronizing"
-        ? { code: state.room.code, synchronizing: state.phase === "synchronizing" }
+        ? {
+            code: state.room.code,
+            synchronizing: state.phase === "synchronizing",
+            timerDuration: state.room.timerDuration,
+            blastTokens: state.room.blastTokens,
+          }
         : null,
     color: role ? colorFor(role) : "red",
     error: state.phase === "failed" ? state.error.message : null,
