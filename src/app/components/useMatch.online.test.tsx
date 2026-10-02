@@ -13,7 +13,6 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OPENING_MATCH_ID } from "./matchSync";
 import {
-  matchRoomOf,
   PROTOCOL_VERSION,
   type OpenChannelInput,
   type RoomAdapter,
@@ -89,7 +88,6 @@ const playingRecord: RoomRecord = {
   timerDuration: 0,
   blastTokens: true,
   status: "playing",
-  createdAt: "2026-01-01T00:00:00.000Z",
 };
 
 function presence(role: "host" | "guest", { clientId = `client-${role}` }: { clientId?: string } = {}): RoomPresence {
@@ -150,8 +148,8 @@ function renderPeer(opts: { network: FakeNetwork; role: "host" | "guest"; timerD
       difficulty: "easy",
       timerDuration: opts.timerDuration,
       soundEnabled: false,
-      transport: room.matchTransport ?? undefined,
-      role: matchRoomOf(room.state)?.role,
+      transport: room.match?.transport ?? undefined,
+      role: room.match?.role,
       onGameEnd,
     });
     renders.push(visibleState(match));
@@ -249,8 +247,8 @@ describe("action sequencing", () => {
     expect(sentActions(guest)).toEqual([{ protocolVersion: 1, type: "drop", revision: 2, col: 3 }]);
     expect(guest.match.board).toEqual(host.match.board);
     expect(guest.match.currentPlayer).toBe("yellow");
-    expect(host.room.matchTransport?.status).toBe("ready");
-    expect(guest.room.matchTransport?.status).toBe("ready");
+    expect(host.room.match?.transport?.status).toBe("ready");
+    expect(guest.room.match?.transport?.status).toBe("ready");
   });
 });
 
@@ -288,13 +286,13 @@ describe("turn timeout", () => {
     expect(held).toEqual([{ protocolVersion: 1, type: "timeout", revision: 1 }]);
     expect(guest.match.currentPlayer).toBe("yellow");
     expect(guest.match.timer).toBe(40);
-    expect(guest.room.matchTransport?.status).toBe("ready");
+    expect(guest.room.match?.transport?.status).toBe("ready");
 
     act(() => guest.match.drop(2));
     await flush();
     expect(sentActions(guest)).toEqual([{ protocolVersion: 1, type: "drop", revision: 2, col: 2 }]);
     expect(host.match.board).toEqual(guest.match.board);
-    expect(host.room.matchTransport?.status).toBe("ready");
+    expect(host.room.match?.transport?.status).toBe("ready");
   });
 
   it("does not interrupt the Room for a move made just before the deadline on a lagging clock", async () => {
@@ -319,8 +317,8 @@ describe("turn timeout", () => {
 
     // No repair ran, and the guest's Drop stands on both boards.
     expect(sentOfType(host, "snapshot")).toHaveLength(0);
-    expect(host.room.matchTransport?.status).toBe("ready");
-    expect(guest.room.matchTransport?.status).toBe("ready");
+    expect(host.room.match?.transport?.status).toBe("ready");
+    expect(guest.room.match?.transport?.status).toBe("ready");
     expect(host.match.board[5][4]).toBe("yellow");
     expect(host.match.board).toEqual(guest.match.board);
     expect(host.match.currentPlayer).toBe("red");
@@ -350,7 +348,7 @@ describe("rejected local actions", () => {
     await flush();
     expect(sentActions(host).at(-1)).toEqual({ protocolVersion: 1, type: "drop", revision: 7, col: 1 });
     expect(guest.match.board).toEqual(host.match.board);
-    expect(guest.room.matchTransport?.status).toBe("ready");
+    expect(guest.room.match?.transport?.status).toBe("ready");
   });
 
 });
@@ -380,7 +378,7 @@ describe("revision gaps", () => {
     expect(guest.match.board).toEqual(board);
     expect(guest.room.state.phase).toBe("interrupted");
     expect(guest.room.state.phase === "interrupted" && guest.room.state.reason).toBe("revision-gap");
-    expect(guest.room.matchTransport?.status).toBe("resynchronizing");
+    expect(guest.room.match?.transport?.status).toBe("resynchronizing");
     expect(guest.match.inputDisabled).toBe(true);
     act(() => guest.match.drop(0));
     expect(sentActions(guest)).toHaveLength(0);
@@ -435,7 +433,7 @@ describe("snapshot repair", () => {
     await flush();
     expect(sentActions(guest)).toEqual([{ protocolVersion: 1, type: "drop", revision: 2, col: 4 }]);
     expect(host.match.board).toEqual(guest.match.board);
-    expect(host.room.matchTransport?.status).toBe("ready");
+    expect(host.room.match?.transport?.status).toBe("ready");
   });
 
   it("replaces divergent guest state atomically", async () => {
@@ -684,7 +682,7 @@ describe("peer interruption and reconnect", () => {
     await flush();
 
     expect(guest.match.board).toEqual(host.match.board);
-    expect(host.room.matchTransport?.status).toBe("resynchronizing");
+    expect(host.room.match?.transport?.status).toBe("resynchronizing");
     expect(host.room.state.phase === "interrupted" && host.room.state.resynchronizing).toBe(true);
     act(() => host.match.drop(1));
     expect(sentActions(host)).toHaveLength(1);
@@ -744,7 +742,7 @@ describe("peer interruption and reconnect", () => {
     sees(guest, ["host", "guest"]);
     sees(host, ["host", "guest"]);
     // The transport's status is live, so it shows what the guest was doing at each send.
-    const guestTransport = guest.room.matchTransport;
+    const guestTransport = guest.room.match?.transport;
     const guestStatuses: string[] = [];
     const transmit = network.transmit.bind(network);
     network.transmit = (from, message) => {
@@ -776,8 +774,8 @@ describe("peer interruption and reconnect", () => {
     await flush();
 
     expect(sentOfType(guest, "snapshot-applied")).toHaveLength(0);
-    expect(host.room.matchTransport?.status).toBe("resynchronizing");
-    expect(guest.room.matchTransport?.status).toBe("interrupted");
+    expect(host.room.match?.transport?.status).toBe("resynchronizing");
+    expect(guest.room.match?.transport?.status).toBe("interrupted");
 
     sees(guest, ["host", "guest"]);
     await flush();
@@ -790,11 +788,11 @@ describe("peer interruption and reconnect", () => {
     network.lose = (message) => message.type === "snapshot-request";
     receive(guest, { protocolVersion: 1, type: "drop", revision: 4, col: 0 });
     await flush();
-    expect(guest.room.matchTransport?.status).toBe("resynchronizing");
+    expect(guest.room.match?.transport?.status).toBe("resynchronizing");
 
     network.lose = null;
     sees(guest, ["guest"]);
-    expect(guest.room.matchTransport?.status).toBe("interrupted");
+    expect(guest.room.match?.transport?.status).toBe("interrupted");
     sees(guest, ["host", "guest"]);
     await flush();
 

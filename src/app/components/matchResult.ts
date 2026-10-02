@@ -5,12 +5,16 @@
  * result is written once; both peers still update their local display score. A
  * failed Room is a no contest and never persists anything.
  */
-import type { RoomState } from "./room";
+import type { RoomMatchInput } from "./room";
 import type { GameMode } from "./StartScreen";
 
-export function persistsMatchResult(opts: { gameMode: GameMode; timerDuration: number; room: RoomState }): boolean {
+export function persistsMatchResult(opts: {
+  gameMode: GameMode;
+  timerDuration: number;
+  room: Pick<RoomMatchInput, "live" | "role"> | null;
+}): boolean {
   if (opts.timerDuration <= 0) return false;
   if (opts.gameMode !== "online") return true;
   const { room } = opts;
-  return (room.phase === "ready" || room.phase === "interrupted") && room.room.role === "host";
+  return !!room && room.live && room.role === "host";
 }

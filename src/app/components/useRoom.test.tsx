@@ -8,12 +8,12 @@
  */
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Result } from "./api";
 import {
   PROTOCOL_VERSION,
   type RoomMessage,
   type OpenChannelInput,
   type RoomAdapter,
-  type RoomApiResult,
   type RoomChannel,
   type RoomPresence,
   type RoomRecord,
@@ -70,7 +70,6 @@ function roomRecord(overrides: Partial<RoomRecord> = {}): RoomRecord {
     timerDuration: 40,
     blastTokens: true,
     status: "waiting",
-    createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -80,9 +79,9 @@ const playingRecord = (overrides: Partial<RoomRecord> = {}) =>
 
 function createFakeAdapter() {
   const state = {
-    createResult: { ok: true, data: roomRecord() } as RoomApiResult<RoomRecord>,
-    joinResult: { ok: true, data: playingRecord() } as RoomApiResult<RoomRecord>,
-    fetchResult: { ok: true, data: roomRecord() } as RoomApiResult<RoomRecord>,
+    createResult: { ok: true, data: roomRecord() } as Result<RoomRecord>,
+    joinResult: { ok: true, data: playingRecord() } as Result<RoomRecord>,
+    fetchResult: { ok: true, data: roomRecord() } as Result<RoomRecord>,
     fetchCalls: 0,
     joinedCodes: [] as string[],
     channels: [] as FakeChannel[],
@@ -193,7 +192,7 @@ describe("readiness gating", () => {
 
     // Persisted playing + SUBSCRIBED, but Presence has not proven both peers live.
     expect(result.current.state.phase).toBe("synchronizing");
-    expect(result.current.matchTransport).toBeNull();
+    expect(result.current.match?.transport ?? null).toBeNull();
 
     act(() => channel().presence([presence("host", { token: RED })]));
     expect(result.current.state.phase).toBe("synchronizing");
@@ -211,11 +210,11 @@ describe("readiness gating", () => {
     // Even with both peers live in Presence, an unsubscribed channel is not ready.
     act(() => channel().presence([presence("host", { token: RED }), presence("guest", { token: BLUE })]));
     expect(result.current.state.phase).toBe("synchronizing");
-    expect(result.current.matchTransport).toBeNull();
+    expect(result.current.match?.transport ?? null).toBeNull();
 
     act(() => channel().subscribed());
     expect(result.current.state.phase).toBe("ready");
-    expect(result.current.matchTransport).not.toBeNull();
+    expect(result.current.match?.transport ?? null).not.toBeNull();
   });
 
   it("normalizes the room code once on join", async () => {
@@ -282,7 +281,7 @@ describe("ordering and exactly-once readiness", () => {
 
     const both = [presence("host"), presence("guest")];
     act(() => channel().presence(both));
-    const transport = result.current.matchTransport;
+    const transport = result.current.match?.transport;
 
     act(() => channel().presence(both));
     act(() => channel().presence(both));
@@ -290,7 +289,7 @@ describe("ordering and exactly-once readiness", () => {
     expect(result.current.state.phase).toBe("ready");
     expect(readyTransitions(phases)).toBe(1);
     // The Match's seam keeps its identity for the whole Room generation.
-    expect(result.current.matchTransport).toBe(transport);
+    expect(result.current.match?.transport).toBe(transport);
   });
 
   it("stops join polling once the Room is ready", async () => {
@@ -377,7 +376,7 @@ describe("player tokens", () => {
 
     const received: unknown[] = [];
     act(() => {
-      result.current.matchTransport?.subscribe((message) => received.push(message));
+      result.current.match?.transport?.subscribe((message) => received.push(message));
     });
 
     const mine: TokenConfig = { type: "gradient", gradient: "mine" };
@@ -398,7 +397,7 @@ describe("player tokens", () => {
 describe("failures", () => {
   it("maps a create failure", async () => {
     const { adapter, state } = createFakeAdapter();
-    state.createResult = { ok: false, error: { status: 429, message: "at capacity" } };
+    state.createResult = { ok: false, error: { kind: "http", status: 429, message: "at capacity" } };
     const { result } = await hostRoom(adapter);
 
     expect(result.current.state).toEqual({
@@ -409,7 +408,7 @@ describe("failures", () => {
 
   it("maps a join failure", async () => {
     const { adapter, state } = createFakeAdapter();
-    state.joinResult = { ok: false, error: { status: 404, message: "no such room" } };
+    state.joinResult = { ok: false, error: { kind: "http", status: 404, message: "no such room" } };
     const { result } = await guestRoom(adapter);
 
     expect(result.current.state.phase).toBe("failed");
@@ -436,14 +435,14 @@ describe("failures", () => {
     const { adapter, state } = createFakeAdapter();
     const { result } = await hostRoom(adapter);
 
-    state.fetchResult = { ok: false, error: { status: 404, message: "not visible yet" } };
+    state.fetchResult = { ok: false, error: { kind: "http", status: 404, message: "not visible yet" } };
     await act(async () => {
       await vi.advanceTimersByTimeAsync(4000);
     });
     expect(result.current.state.phase).toBe("waiting");
     expect(state.fetchCalls).toBeGreaterThanOrEqual(2);
 
-    state.fetchResult = { ok: false, error: { status: 500, message: "Room is gone." } };
+    state.fetchResult = { ok: false, error: { kind: "http", status: 500, message: "Room is gone." } };
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
@@ -468,7 +467,7 @@ describe("failures", () => {
     act(() => channel().presence([presence("host"), presence("guest", { token: BLUE })]));
     const received: unknown[] = [];
     act(() => {
-      result.current.matchTransport?.subscribe((message) => received.push(message));
+      result.current.match?.transport?.subscribe((message) => received.push(message));
     });
 
     act(() => channel().message({ type: "drop", col: 3 })); // no protocolVersion
@@ -502,7 +501,7 @@ describe("cleanup", () => {
 
     const received: unknown[] = [];
     act(() => {
-      result.current.matchTransport?.subscribe((message) => received.push(message));
+      result.current.match?.transport?.subscribe((message) => received.push(message));
     });
 
     await act(async () => {
@@ -511,7 +510,7 @@ describe("cleanup", () => {
 
     expect(opened.closeCount).toBe(1);
     expect(result.current.state).toEqual({ phase: "idle" });
-    expect(result.current.matchTransport).toBeNull();
+    expect(result.current.match?.transport ?? null).toBeNull();
 
     const callsAfterLeave = state.fetchCalls;
     await act(async () => {
@@ -572,7 +571,7 @@ describe("interruption and reconnect", () => {
   it("interrupts a Ready Room when peer Presence disappears", async () => {
     const { adapter, channel } = createFakeAdapter();
     const { result } = await readyGuest(adapter, channel);
-    const transport = result.current.matchTransport;
+    const transport = result.current.match?.transport;
 
     act(() => channel().presence([presence("guest", { token: BLUE })]));
 
@@ -582,7 +581,7 @@ describe("interruption and reconnect", () => {
       reconnectDeadline: Date.now() + 20_000,
     });
     // The Match keeps the same seam and sees the pause immediately.
-    expect(result.current.matchTransport).toBe(transport);
+    expect(result.current.match?.transport).toBe(transport);
     expect(transport?.status).toBe("interrupted");
   });
 
@@ -593,7 +592,7 @@ describe("interruption and reconnect", () => {
     act(() => channel().errored("socket dropped"));
 
     expect(interruption(result.current.state)?.reason).toBe("channel-lost");
-    expect(result.current.matchTransport?.status).toBe("interrupted");
+    expect(result.current.match?.transport?.status).toBe("interrupted");
     expect(channel().closeCount).toBe(0);
   });
 
@@ -607,14 +606,14 @@ describe("interruption and reconnect", () => {
     expect(channel().tracked).toHaveLength(2);
     expect(channel().tracked[1].clientId).toBe(channel().tracked[0].clientId);
     // Presence from before the loss proves nothing: wait for a fresh sync.
-    expect(result.current.matchTransport?.status).toBe("interrupted");
+    expect(result.current.match?.transport?.status).toBe("interrupted");
     // Subscribed again, but Presence has not yet proven both sessions live.
     act(() => channel().presence([presence("guest", { token: BLUE })]));
-    expect(result.current.matchTransport?.status).toBe("interrupted");
+    expect(result.current.match?.transport?.status).toBe("interrupted");
 
     act(() => channel().presence([presence("host", { token: RED }), presence("guest", { token: BLUE })]));
     expect(interruption(result.current.state)?.resynchronizing).toBe(true);
-    expect(result.current.matchTransport?.status).toBe("resynchronizing");
+    expect(result.current.match?.transport?.status).toBe("resynchronizing");
   });
 
   it("returns to ready only when the Match acknowledges resynchronization", async () => {
@@ -623,15 +622,15 @@ describe("interruption and reconnect", () => {
 
     act(() => channel().presence([presence("guest", { token: BLUE })]));
     // Resuming while the peer is still gone does nothing.
-    act(() => result.current.matchTransport?.resume());
-    expect(result.current.matchTransport?.status).toBe("interrupted");
+    act(() => result.current.match?.transport?.resume());
+    expect(result.current.match?.transport?.status).toBe("interrupted");
 
     act(() => channel().presence([presence("host", { token: RED }), presence("guest", { token: BLUE })]));
     expect(result.current.state.phase).toBe("interrupted");
 
-    act(() => result.current.matchTransport?.resume());
+    act(() => result.current.match?.transport?.resume());
     expect(result.current.state.phase).toBe("ready");
-    expect(result.current.matchTransport?.status).toBe("ready");
+    expect(result.current.match?.transport?.status).toBe("ready");
 
     // Recovery cleared the deadline: nothing fails later.
     await act(async () => {
@@ -658,7 +657,7 @@ describe("interruption and reconnect", () => {
     expect(state.phase).toBe("failed");
     expect(state.phase === "failed" && state.error.kind).toBe("peer-timeout");
     expect(state.phase === "failed" && state.previousRoom?.code).toBe("ABCD");
-    expect(result.current.matchTransport).toBeNull();
+    expect(result.current.match?.transport ?? null).toBeNull();
     expect(channel().closeCount).toBe(1);
   });
 
@@ -706,7 +705,7 @@ describe("interruption and reconnect", () => {
     const { state } = result.current;
     expect(state.phase).toBe("failed");
     expect(state.phase === "failed" && state.error.kind).toBe("resync-failed");
-    expect(result.current.matchTransport).toBeNull();
+    expect(result.current.match?.transport ?? null).toBeNull();
   });
 
   it("generates one client identity for the Room Module lifetime", async () => {
@@ -765,8 +764,112 @@ describe("reload refusal", () => {
     expect(room.phase).toBe("failed");
     expect(room.phase === "failed" && room.error.kind).toBe("resync-failed");
     expect(room.phase === "failed" && room.error.message).toMatch(/reload/i);
-    expect(result.current.matchTransport).toBeNull();
+    expect(result.current.match?.transport ?? null).toBeNull();
     expect(state.channels).toHaveLength(0);
     expect(state.activeRoom).toBeNull();
+  });
+});
+
+// ─── Projections: what the lobby renders and what a Match starts from ───
+
+describe("lobby projection", () => {
+  it("shows the pending create, then the open Room until it is ready", async () => {
+    const { adapter, state, channel } = createFakeAdapter();
+    const view = renderRoom(adapter);
+    expect(view.result.current.lobby).toEqual({ pending: null, openRoom: null, color: "red", error: null });
+
+    let created: Promise<void> | undefined;
+    act(() => {
+      created = view.result.current.create({ hostName: "Ana", timerDuration: 40, token: RED });
+    });
+    expect(view.result.current.lobby.pending).toBe("create");
+    await act(async () => {
+      await created;
+    });
+    expect(view.result.current.lobby).toEqual({
+      pending: null,
+      openRoom: { code: "ABCD", synchronizing: false },
+      color: "red",
+      error: null,
+    });
+
+    act(() => channel().subscribed());
+    state.fetchResult = { ok: true, data: playingRecord() };
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(view.result.current.lobby.openRoom).toEqual({ code: "ABCD", synchronizing: true });
+
+    act(() => channel().presence([presence("host", { token: RED }), presence("guest", { token: BLUE })]));
+    // Ready: the lobby no longer owns the view; the Match starts.
+    expect(view.result.current.lobby.openRoom).toBeNull();
+  });
+
+  it("gives a joining guest the yellow colour", async () => {
+    const { adapter } = createFakeAdapter();
+    const { result } = await guestRoom(adapter);
+    expect(result.current.lobby.color).toBe("yellow");
+    expect(result.current.lobby.openRoom).toEqual({ code: "ABCD", synchronizing: true });
+  });
+
+  it("shows why the Room failed", async () => {
+    const { adapter, state } = createFakeAdapter();
+    state.joinResult = { ok: false, error: { kind: "http", status: 404, message: "no such room" } };
+    const { result } = await guestRoom(adapter);
+    expect(result.current.lobby.error).toBe("no such room");
+    expect(result.current.match).toBeNull();
+  });
+});
+
+describe("Match input projection", () => {
+  it("is absent until the Room is ready", async () => {
+    const { adapter } = createFakeAdapter();
+    const { result } = await guestRoom(adapter);
+    expect(result.current.state.phase).toBe("synchronizing");
+    expect(result.current.match).toBeNull();
+  });
+
+  it("carries the persisted timer and Blast-token setting, Role, and participants", async () => {
+    const { adapter, state, channel } = createFakeAdapter();
+    state.joinResult = { ok: true, data: playingRecord({ timerDuration: 30, blastTokens: false }) };
+    const { result } = await readyGuest(adapter, channel);
+
+    const match = result.current.match;
+    expect(match).toMatchObject({
+      role: "guest",
+      timerDuration: 30,
+      blastTokens: false,
+      participants: { red: { name: "Ana", token: RED }, yellow: { name: "Bo", token: BLUE } },
+      live: true,
+      notice: null,
+    });
+    expect(match?.transport?.role).toBe("guest");
+  });
+
+  it("stays live with a notice while interrupted", async () => {
+    const { adapter, channel } = createFakeAdapter();
+    const { result } = await readyGuest(adapter, channel);
+    const transport = result.current.match?.transport;
+
+    act(() => channel().presence([presence("guest", { token: BLUE })]));
+    const match = result.current.match;
+    expect(match?.live).toBe(true);
+    expect(match?.transport).toBe(transport);
+    expect(match?.notice).toMatchObject({ kind: "interrupted", reason: "peer-left", resynchronizing: false });
+  });
+
+  it("keeps the players but drops the transport once the Room fails as no contest", async () => {
+    const { adapter, channel } = createFakeAdapter();
+    const { result } = await readyGuest(adapter, channel);
+
+    act(() => channel().presence([presence("guest", { token: BLUE })]));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    const match = result.current.match;
+    expect(match?.live).toBe(false);
+    expect(match?.transport).toBeNull();
+    expect(match?.participants.red.name).toBe("Ana");
+    expect(match?.notice?.kind).toBe("no-contest");
   });
 });

@@ -3,9 +3,11 @@
  *
  * One module owns create/join orchestration, subscription state, Presence-derived
  * liveness, participant projection, Player Token synchronization, interruption,
- * cleanup, and readiness. Render Modules consume the discriminated `RoomState`;
- * the Match consumes only `matchTransport`, a narrow Adapter whose identity is
- * stable for one Room generation.
+ * cleanup, and readiness. Callers consume two projections instead of matching
+ * `RoomState` phases: `lobby` (what the lobby renders) and `match` (what an
+ * online Match starts from — Role, participants, timer, Blast-token setting,
+ * notice, and `transport`, a narrow Adapter whose identity is stable for one
+ * Room generation).
  *
  * The rule this module exists to enforce — a **Ready Room** exists only when:
  *  1. the persisted Room is `playing`;
@@ -40,6 +42,8 @@ import {
   colorFor,
   decodeRoomMessage,
   decodeRoomPresence,
+  projectLobby,
+  projectMatchInput,
   projectReadyRoom,
   type InterruptReason,
   type OnlineMatchTransport,
@@ -48,6 +52,8 @@ import {
   type RoomAdapter,
   type RoomChannel,
   type RoomFailure,
+  type RoomLobby,
+  type RoomMatchInput,
   type RoomPresence,
   type RoomRecord,
   type RoomState,
@@ -62,8 +68,13 @@ export const RECONNECT_DEADLINE_MS = 20_000;
 type TransportStatus = OnlineMatchTransport["status"];
 
 export interface UseRoomReturn {
+  /** The full lifecycle — for the Room's own tests and diagnostics. Callers
+   *  render `lobby` and start the Match from `match` instead of matching phases. */
   state: RoomState;
-  matchTransport: OnlineMatchTransport | null;
+  /** What the lobby renders. */
+  lobby: RoomLobby;
+  /** What an online Match starts from and renders; null before the Room was ever ready. */
+  match: RoomMatchInput | null;
   create(input: { hostName: string; timerDuration: number; token: TokenConfig }): Promise<void>;
   join(input: { code: string; guestName: string; token: TokenConfig }): Promise<void>;
   updateLocalToken(token: TokenConfig): void;
@@ -420,15 +431,15 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
         if (generationRef.current !== generation) return;
         const res = await adapter.fetchRoom(code);
         if (generationRef.current !== generation) return;
-        if (res.ok && res.data) {
+        if (res.ok) {
           if (res.data.status === "playing" && res.data.guestName) {
             update(generation, { record: res.data });
           }
-        } else if (res.error?.status !== 404) {
+        } else if (res.error.status !== 404) {
           // 404 = not visible yet; keep polling. Anything else is fatal.
           fail(generation, {
             kind: "room-unavailable",
-            message: res.error?.message || "Room is no longer available.",
+            message: res.error.message || "Room is no longer available.",
           });
         }
       }, POLL_INTERVAL_MS);
@@ -458,10 +469,10 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
 
       const res = await adapter.createRoom({ hostName, timerDuration });
       if (generationRef.current !== generation) return;
-      if (!res.ok || !res.data) {
+      if (!res.ok) {
         fail(generation, {
           kind: "create-failed",
-          message: res.error?.message || "Failed to create room. Please try again.",
+          message: res.error.message || "Failed to create room. Please try again.",
         });
         return;
       }
@@ -495,10 +506,10 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
       const normalized = code.toUpperCase().trim();
       const res = await adapter.joinRoom({ code: normalized, guestName });
       if (generationRef.current !== generation) return;
-      if (!res.ok || !res.data) {
+      if (!res.ok) {
         fail(generation, {
           kind: "join-failed",
-          message: res.error?.message || "Room not found or already full.",
+          message: res.error.message || "Room not found or already full.",
         });
         return;
       }
@@ -592,10 +603,11 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
     // `internal` is the single source; `isReady`/`persistedReady` derive from it.
   }, [internal, isReady, persistedReady]);
 
-  const matchTransport =
-    state.phase === "ready" || state.phase === "interrupted" ? transportRef.current : null;
+  const lobby = useMemo(() => projectLobby(state), [state]);
+  // The transport ref is set when the channel opens, before any ready state.
+  const match = useMemo(() => projectMatchInput(state, transportRef.current), [state]);
 
-  return { state, matchTransport, create, join, updateLocalToken, leave };
+  return { state, lobby, match, create, join, updateLocalToken, leave };
 }
 
 /** The colour a Role plays — re-exported so render Modules need one import. */
