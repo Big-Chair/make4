@@ -241,10 +241,10 @@ describe("action sequencing", () => {
     await flush();
 
     expect(sentActions(host)).toEqual([
-      { protocolVersion: 1, type: "drop", revision: 1, col: 3 },
-      { protocolVersion: 1, type: "drop", revision: 3, col: 4 },
+      { protocolVersion: 2, type: "drop", revision: 1, col: 3 },
+      { protocolVersion: 2, type: "drop", revision: 3, col: 4 },
     ]);
-    expect(sentActions(guest)).toEqual([{ protocolVersion: 1, type: "drop", revision: 2, col: 3 }]);
+    expect(sentActions(guest)).toEqual([{ protocolVersion: 2, type: "drop", revision: 2, col: 3 }]);
     expect(guest.match.board).toEqual(host.match.board);
     expect(guest.match.currentPlayer).toBe("yellow");
     expect(host.room.match?.transport?.status).toBe("ready");
@@ -283,14 +283,14 @@ describe("turn timeout", () => {
     for (const message of held) network.transmit(host.channel(), message);
     await flush();
 
-    expect(held).toEqual([{ protocolVersion: 1, type: "timeout", revision: 1 }]);
+    expect(held).toEqual([{ protocolVersion: 2, type: "timeout", revision: 1 }]);
     expect(guest.match.currentPlayer).toBe("yellow");
     expect(guest.match.timer).toBe(40);
     expect(guest.room.match?.transport?.status).toBe("ready");
 
     act(() => guest.match.drop(2));
     await flush();
-    expect(sentActions(guest)).toEqual([{ protocolVersion: 1, type: "drop", revision: 2, col: 2 }]);
+    expect(sentActions(guest)).toEqual([{ protocolVersion: 2, type: "drop", revision: 2, col: 2 }]);
     expect(host.match.board).toEqual(guest.match.board);
     expect(host.room.match?.transport?.status).toBe("ready");
   });
@@ -346,7 +346,7 @@ describe("rejected local actions", () => {
 
     act(() => host.match.drop(1));
     await flush();
-    expect(sentActions(host).at(-1)).toEqual({ protocolVersion: 1, type: "drop", revision: 7, col: 1 });
+    expect(sentActions(host).at(-1)).toEqual({ protocolVersion: 2, type: "drop", revision: 7, col: 1 });
     expect(guest.match.board).toEqual(host.match.board);
     expect(guest.room.match?.transport?.status).toBe("ready");
   });
@@ -373,7 +373,7 @@ describe("revision gaps", () => {
     const board = guest.match.board;
 
     // The guest is at revision 1 and expects revision 2 next.
-    receive(guest, { protocolVersion: 1, type: "drop", revision: 3, col: 5 });
+    receive(guest, { protocolVersion: 2, type: "drop", revision: 3, col: 5 });
 
     expect(guest.match.board).toEqual(board);
     expect(guest.room.state.phase).toBe("interrupted");
@@ -392,7 +392,7 @@ describe("revision gaps", () => {
     const timer = guest.match.timer;
     expect(timer).toBeLessThan(40);
 
-    receive(guest, { protocolVersion: 1, type: "drop", revision: 7, col: 5 });
+    receive(guest, { protocolVersion: 2, type: "drop", revision: 7, col: 5 });
     await elapse(5000);
 
     expect(guest.match.timer).toBe(timer);
@@ -411,16 +411,16 @@ describe("snapshot repair", () => {
     network.lose = null;
     expect(guest.match.board).not.toEqual(host.match.board);
 
-    receive(guest, { protocolVersion: 1, type: "drop", revision: 2, col: 4 });
+    receive(guest, { protocolVersion: 2, type: "drop", revision: 2, col: 4 });
     expect(sentOfType(guest, "snapshot-request")).toHaveLength(1);
 
     await flush();
 
     const [snapshot] = sentOfType(host, "snapshot");
     expect(snapshot.requestId).toBe(sentOfType(guest, "snapshot-request")[0].requestId);
-    expect(snapshot.snapshot).toMatchObject({ protocolVersion: 1, revision: 1, currentPlayer: "yellow" });
+    expect(snapshot.snapshot).toMatchObject({ protocolVersion: 2, revision: 1, currentPlayer: "yellow" });
     expect(sentOfType(guest, "snapshot-applied")).toEqual([
-      { protocolVersion: 1, type: "snapshot-applied", requestId: snapshot.requestId, revision: 1 },
+      { protocolVersion: 2, type: "snapshot-applied", requestId: snapshot.requestId, revision: 1 },
     ]);
 
     expect(guest.match.board).toEqual(host.match.board);
@@ -431,7 +431,7 @@ describe("snapshot repair", () => {
     // Play continues from the repaired revision.
     act(() => guest.match.drop(4));
     await flush();
-    expect(sentActions(guest)).toEqual([{ protocolVersion: 1, type: "drop", revision: 2, col: 4 }]);
+    expect(sentActions(guest)).toEqual([{ protocolVersion: 2, type: "drop", revision: 2, col: 4 }]);
     expect(host.match.board).toEqual(guest.match.board);
     expect(host.room.match?.transport?.status).toBe("ready");
   });
@@ -453,7 +453,7 @@ describe("snapshot repair", () => {
     expect(before).not.toEqual(after);
     const firstRender = guest.renders.length;
 
-    receive(guest, { protocolVersion: 1, type: "drop", revision: 9, col: 0 });
+    receive(guest, { protocolVersion: 2, type: "drop", revision: 9, col: 0 });
     await flush();
 
     expect(visibleState(guest.match)).toEqual(after);
@@ -467,7 +467,7 @@ describe("snapshot repair", () => {
     const { guest } = await startReadyMatch();
     const board = guest.match.board;
 
-    receive(guest, { protocolVersion: 1, type: "snapshot", requestId: "r1", snapshot: { board: "junk" } });
+    receive(guest, { protocolVersion: 2, type: "snapshot", requestId: "r1", snapshot: { board: "junk" } });
 
     expect(guest.room.state.phase).toBe("failed");
     expect(guest.room.state.phase === "failed" && guest.room.state.error.kind).toBe("resync-failed");
@@ -479,7 +479,7 @@ describe("snapshot repair", () => {
     const { guest } = await startReadyMatch();
     expect(guest.match.myColor).toBe("yellow");
 
-    receive(guest, { protocolVersion: 1, type: "snapshot", requestId: "r1", snapshot: { board: "junk" } });
+    receive(guest, { protocolVersion: 2, type: "snapshot", requestId: "r1", snapshot: { board: "junk" } });
 
     expect(guest.room.state.phase).toBe("failed");
     expect(guest.match.myColor).toBe("yellow");
@@ -489,7 +489,7 @@ describe("snapshot repair", () => {
     const { network, host, guest, flush } = await startReadyMatch();
     network.lose = (message) => message.type === "snapshot-applied";
 
-    receive(guest, { protocolVersion: 1, type: "drop", revision: 5, col: 4 });
+    receive(guest, { protocolVersion: 2, type: "drop", revision: 5, col: 4 });
     await flush();
     expect(host.room.state.phase).toBe("interrupted");
 
@@ -504,7 +504,7 @@ describe("snapshot repair", () => {
     const { network, guest, flush } = await startReadyMatch();
     network.lose = (message) => message.type === "snapshot";
 
-    receive(guest, { protocolVersion: 1, type: "drop", revision: 5, col: 4 });
+    receive(guest, { protocolVersion: 2, type: "drop", revision: 5, col: 4 });
     await flush();
     await elapse(20_000);
 
@@ -540,7 +540,7 @@ describe("winner recording", () => {
     expect(guest.match.winner).toBe("red");
     expect(guest.onGameEnd).toHaveBeenCalledTimes(1);
 
-    receive(guest, { protocolVersion: 1, type: "drop", revision: 99, col: 4 });
+    receive(guest, { protocolVersion: 2, type: "drop", revision: 99, col: 4 });
     await flush();
 
     expect(sentOfType(guest, "snapshot-applied")).toHaveLength(1);
@@ -588,10 +588,10 @@ describe("rematch", () => {
     // Red won, so red starts the rematch.
     act(() => host.match.drop(2));
     await flush();
-    expect(sentActions(host).at(-1)).toEqual({ protocolVersion: 1, type: "drop", revision: 1, col: 2 });
+    expect(sentActions(host).at(-1)).toEqual({ protocolVersion: 2, type: "drop", revision: 1, col: 2 });
     expect(guest.match.board).toEqual(host.match.board);
 
-    receive(guest, { protocolVersion: 1, type: "drop", revision: 9, col: 0 });
+    receive(guest, { protocolVersion: 2, type: "drop", revision: 9, col: 0 });
     await flush();
     expect(sentOfType(host, "snapshot").at(-1)?.snapshot).toMatchObject({
       matchId: rematch.matchId,
@@ -695,7 +695,7 @@ describe("peer interruption and reconnect", () => {
     expect(guest.room.state.phase).toBe("ready");
     act(() => guest.match.drop(4));
     await flush();
-    expect(sentActions(guest).at(-1)).toEqual({ protocolVersion: 1, type: "drop", revision: 2, col: 4 });
+    expect(sentActions(guest).at(-1)).toEqual({ protocolVersion: 2, type: "drop", revision: 2, col: 4 });
     expect(host.match.board).toEqual(guest.match.board);
 
     // Recovery cleared the deadline on both sides.
@@ -786,7 +786,7 @@ describe("peer interruption and reconnect", () => {
   it("recovers a revision-gap handshake that a peer loss interrupted", async () => {
     const { network, host, guest, flush } = await startReadyMatch();
     network.lose = (message) => message.type === "snapshot-request";
-    receive(guest, { protocolVersion: 1, type: "drop", revision: 4, col: 0 });
+    receive(guest, { protocolVersion: 2, type: "drop", revision: 4, col: 0 });
     await flush();
     expect(guest.room.match?.transport?.status).toBe("resynchronizing");
 

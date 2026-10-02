@@ -222,27 +222,27 @@ afterEach(() => {
 describe("wire envelopes", () => {
   it("decodes only protocol-1 Match messages with well-typed fields", () => {
     expect(decodeMatchMessage({ type: "drop", revision: 1, col: 3 })).toBeNull();
-    expect(decodeMatchMessage({ protocolVersion: 2, type: "drop", revision: 1, col: 3 })).toBeNull();
-    expect(decodeMatchMessage({ protocolVersion: 1, type: "teleport", col: 3 })).toBeNull();
-    expect(decodeMatchMessage({ protocolVersion: 1, type: "drop", revision: 1, col: "3" })).toBeNull();
-    expect(decodeMatchMessage({ protocolVersion: 1, type: "token-sync", token: { type: "default" } })).toBeNull();
-    expect(decodeMatchMessage({ protocolVersion: 1, type: "rematch", matchId: "not-a-match" })).toBeNull();
-    expect(decodeMatchMessage({ protocolVersion: 1, type: "timeout" })).toBeNull();
+    expect(decodeMatchMessage({ protocolVersion: 1, type: "drop", revision: 1, col: 3 })).toBeNull();
+    expect(decodeMatchMessage({ protocolVersion: 2, type: "teleport", col: 3 })).toBeNull();
+    expect(decodeMatchMessage({ protocolVersion: 2, type: "drop", revision: 1, col: "3" })).toBeNull();
+    expect(decodeMatchMessage({ protocolVersion: 2, type: "token-sync", token: { type: "default" } })).toBeNull();
+    expect(decodeMatchMessage({ protocolVersion: 2, type: "rematch", matchId: "not-a-match" })).toBeNull();
+    expect(decodeMatchMessage({ protocolVersion: 2, type: "timeout" })).toBeNull();
     expect(decodeMatchMessage("junk")).toBeNull();
 
-    expect(decodeMatchMessage({ protocolVersion: 1, type: "drop", revision: 1, col: 3 })).toEqual({
-      protocolVersion: 1,
+    expect(decodeMatchMessage({ protocolVersion: 2, type: "drop", revision: 1, col: 3 })).toEqual({
+      protocolVersion: 2,
       type: "drop",
       revision: 1,
       col: 3,
     });
-    expect(decodeMatchMessage({ protocolVersion: 1, type: "timeout", revision: 4 })).toEqual({
-      protocolVersion: 1,
+    expect(decodeMatchMessage({ protocolVersion: 2, type: "timeout", revision: 4 })).toEqual({
+      protocolVersion: 2,
       type: "timeout",
       revision: 4,
     });
-    expect(decodeMatchMessage({ protocolVersion: 1, type: "rematch", matchId: "match-2" })).toEqual({
-      protocolVersion: 1,
+    expect(decodeMatchMessage({ protocolVersion: 2, type: "rematch", matchId: "match-2" })).toEqual({
+      protocolVersion: 2,
       type: "rematch",
       matchId: "match-2",
     });
@@ -250,7 +250,7 @@ describe("wire envelopes", () => {
 
   it("ignores a malformed payload without touching the Match", () => {
     const { host } = pair();
-    host.transport.receive({ protocolVersion: 1, type: "drop", col: "3" });
+    host.transport.receive({ protocolVersion: 2, type: "drop", col: "3" });
     expect(host.match.applied).toEqual([]);
     expect(host.transport.status).toBe("ready");
   });
@@ -267,8 +267,8 @@ describe("revisions", () => {
     expect(guest.sync.play({ type: "drop", col: 3 })).toBe(true);
     await wire.flush();
 
-    expect(actions(host)).toEqual([{ protocolVersion: 1, type: "drop", revision: 1, col: 3 }]);
-    expect(actions(guest)).toEqual([{ protocolVersion: 1, type: "drop", revision: 2, col: 3 }]);
+    expect(actions(host)).toEqual([{ protocolVersion: 2, type: "drop", revision: 1, col: 3 }]);
+    expect(actions(guest)).toEqual([{ protocolVersion: 2, type: "drop", revision: 2, col: 3 }]);
     expect(guest.match.state.board).toEqual(host.match.state.board);
     expect(guest.transport.status).toBe("ready");
   });
@@ -280,7 +280,7 @@ describe("revisions", () => {
     expect(host.sync.play({ type: "drop", col: 2 })).toBe(true);
     await wire.flush();
 
-    expect(actions(host)).toEqual([{ protocolVersion: 1, type: "drop", revision: 1, col: 2 }]);
+    expect(actions(host)).toEqual([{ protocolVersion: 2, type: "drop", revision: 1, col: 2 }]);
   });
 
   it("refuses local actions on the opponent's turn or while not ready", () => {
@@ -305,7 +305,7 @@ describe("revisions", () => {
     await wire.flush();
     const board = guest.match.state.board;
 
-    guest.transport.receive({ protocolVersion: 1, type: "drop", revision, col: 5 });
+    guest.transport.receive({ protocolVersion: 2, type: "drop", revision, col: 5 });
 
     expect(guest.match.state.board).toEqual(board);
     expect(guest.transport.interrupts).toEqual(["revision-gap"]);
@@ -316,10 +316,10 @@ describe("revisions", () => {
     const { host, guest } = pair();
 
     // Red moves first, so a "guest" Drop at revision 1 is out of turn for the guest's opponent.
-    host.transport.receive({ protocolVersion: 1, type: "drop", revision: 1, col: 5 });
+    host.transport.receive({ protocolVersion: 2, type: "drop", revision: 1, col: 5 });
     expect(host.transport.interrupts).toEqual(["revision-gap"]);
 
-    guest.transport.receive({ protocolVersion: 1, type: "blast", revision: 1, row: 5, col: 5 });
+    guest.transport.receive({ protocolVersion: 2, type: "blast", revision: 1, row: 5, col: 5 });
     expect(guest.transport.interrupts).toEqual(["revision-gap"]);
     expect(guest.match.applied).toEqual([]);
   });
@@ -327,7 +327,7 @@ describe("revisions", () => {
   it("ignores actions while resynchronizing: the snapshot supersedes them", () => {
     const { guest } = pair();
     guest.transport.status = "resynchronizing";
-    guest.transport.receive({ protocolVersion: 1, type: "drop", revision: 1, col: 5 });
+    guest.transport.receive({ protocolVersion: 2, type: "drop", revision: 1, col: 5 });
     expect(guest.match.applied).toEqual([]);
     expect(guest.sentOfType("snapshot-request")).toHaveLength(0);
   });
@@ -342,14 +342,14 @@ describe("timeout", () => {
     expect(host.sync.play({ type: "timeout" })).toBe(true);
     await wire.flush();
 
-    expect(actions(host)).toEqual([{ protocolVersion: 1, type: "timeout", revision: 1 }]);
+    expect(actions(host)).toEqual([{ protocolVersion: 2, type: "timeout", revision: 1 }]);
     expect(guest.match.applied).toEqual([{ type: "timeout" }]);
     expect(guest.match.state.currentPlayer).toBe("yellow");
 
     // The Timeout took a revision: the guest's next move is revision 2.
     expect(guest.sync.play({ type: "drop", col: 3 })).toBe(true);
     await wire.flush();
-    expect(actions(guest)).toEqual([{ protocolVersion: 1, type: "drop", revision: 2, col: 3 }]);
+    expect(actions(guest)).toEqual([{ protocolVersion: 2, type: "drop", revision: 2, col: 3 }]);
     expect(host.match.state.board).toEqual(guest.match.state.board);
     expect(host.transport.status).toBe("ready");
     expect(guest.transport.status).toBe("ready");
@@ -375,7 +375,7 @@ describe("timeout", () => {
     host.sync.play({ type: "drop", col: 3 });
     await wire.flush();
 
-    guest.transport.receive({ protocolVersion: 1, type: "timeout", revision });
+    guest.transport.receive({ protocolVersion: 2, type: "timeout", revision });
 
     expect(guest.match.state.currentPlayer).toBe("yellow");
     expect(guest.transport.interrupts).toEqual(["revision-gap"]);
@@ -386,7 +386,7 @@ describe("timeout", () => {
     const { host } = pair();
 
     // Red's turn: only the host may time it out.
-    host.transport.receive({ protocolVersion: 1, type: "timeout", revision: 1 });
+    host.transport.receive({ protocolVersion: 2, type: "timeout", revision: 1 });
 
     expect(host.transport.interrupts).toEqual(["revision-gap"]);
     expect(host.match.applied).toEqual([]);
@@ -403,7 +403,7 @@ describe("snapshot handshake", () => {
     await wire.flush();
     wire.lose = null;
 
-    guest.transport.receive({ protocolVersion: 1, type: "drop", revision: 2, col: 4 });
+    guest.transport.receive({ protocolVersion: 2, type: "drop", revision: 2, col: 4 });
     const [request] = guest.sentOfType("snapshot-request");
     expect(request).toBeDefined();
 
@@ -415,11 +415,11 @@ describe("snapshot handshake", () => {
 
     const [snapshot] = host.sentOfType("snapshot");
     expect(snapshot.requestId).toBe(request.requestId);
-    expect(snapshot.snapshot).toMatchObject({ protocolVersion: 1, matchId: OPENING_MATCH_ID, revision: 1 });
+    expect(snapshot.snapshot).toMatchObject({ protocolVersion: 2, matchId: OPENING_MATCH_ID, revision: 1 });
     expect(guest.match.state.board).toEqual(host.match.state.board);
     expect(guest.transport.status).toBe("ready");
     const [ack] = guest.sentOfType("snapshot-applied");
-    expect(ack).toEqual({ protocolVersion: 1, type: "snapshot-applied", requestId: request.requestId, revision: 1 });
+    expect(ack).toEqual({ protocolVersion: 2, type: "snapshot-applied", requestId: request.requestId, revision: 1 });
 
     wire.lose = null;
     host.transport.receive(JSON.parse(JSON.stringify(ack)));
@@ -428,7 +428,7 @@ describe("snapshot handshake", () => {
     // Play continues from the restored revision.
     expect(guest.sync.play({ type: "drop", col: 4 })).toBe(true);
     await wire.flush();
-    expect(actions(guest)).toEqual([{ protocolVersion: 1, type: "drop", revision: 2, col: 4 }]);
+    expect(actions(guest)).toEqual([{ protocolVersion: 2, type: "drop", revision: 2, col: 4 }]);
     expect(host.match.state.board).toEqual(guest.match.state.board);
   });
 
@@ -442,7 +442,7 @@ describe("snapshot handshake", () => {
     await wire.flush();
     wire.lose = null;
 
-    host.transport.receive({ protocolVersion: 1, type: "drop", revision: 3, col: 5 });
+    host.transport.receive({ protocolVersion: 2, type: "drop", revision: 3, col: 5 });
     expect(host.sentOfType("snapshot")).toHaveLength(1);
     await wire.flush();
 
@@ -494,7 +494,7 @@ describe("snapshot handshake", () => {
 
   it("fails resynchronization on an undecodable snapshot", () => {
     const { guest } = pair();
-    guest.transport.receive({ protocolVersion: 1, type: "snapshot", requestId: "r1", snapshot: { board: "junk" } });
+    guest.transport.receive({ protocolVersion: 2, type: "snapshot", requestId: "r1", snapshot: { board: "junk" } });
     expect(guest.transport.failures).toHaveLength(1);
     expect(guest.match.restores).toEqual([]);
   });
@@ -506,14 +506,14 @@ describe("snapshot handshake", () => {
     await wire.flush();
     host.transport.failures = [];
 
-    host.transport.receive({ protocolVersion: 1, type: "snapshot-applied", requestId: snapshot.requestId, revision: 7 });
+    host.transport.receive({ protocolVersion: 2, type: "snapshot-applied", requestId: snapshot.requestId, revision: 7 });
     // The guest's real acknowledgement already resumed the host; a stray one is ignored.
     expect(host.transport.failures).toEqual([]);
 
     resynchronize(host);
     const latest = host.sentOfType("snapshot").at(-1);
     wire.queue = [];
-    host.transport.receive({ protocolVersion: 1, type: "snapshot-applied", requestId: latest?.requestId, revision: 7 });
+    host.transport.receive({ protocolVersion: 2, type: "snapshot-applied", requestId: latest?.requestId, revision: 7 });
     expect(host.transport.failures).toHaveLength(1);
     expect(host.transport.status).toBe("resynchronizing");
   });
@@ -531,7 +531,7 @@ describe("snapshot handshake", () => {
 
     host.transport.status = "interrupted";
     host.sync.statusChanged();
-    host.transport.receive({ protocolVersion: 1, type: "snapshot-request", requestId: "r9" });
+    host.transport.receive({ protocolVersion: 2, type: "snapshot-request", requestId: "r9" });
     expect(host.sentOfType("snapshot")).toHaveLength(1);
   });
 
@@ -572,8 +572,8 @@ describe("rematch", () => {
     await wire.flush();
     const board = host.match.state.board;
 
-    guest.transport.receive({ protocolVersion: 1, type: "rematch", matchId: "match-1" });
-    host.transport.receive({ protocolVersion: 1, type: "rematch", matchId: "match-1" });
+    guest.transport.receive({ protocolVersion: 2, type: "rematch", matchId: "match-1" });
+    host.transport.receive({ protocolVersion: 2, type: "rematch", matchId: "match-1" });
     await wire.flush();
 
     expect(host.match.rematches).toEqual([]);
@@ -593,13 +593,13 @@ describe("rematch", () => {
     expect(guest.sync.rematch()).toBe(true);
     await wire.flush();
 
-    expect(guest.sentOfType("rematch")).toEqual([{ protocolVersion: 1, type: "rematch", matchId: "match-1" }]);
+    expect(guest.sentOfType("rematch")).toEqual([{ protocolVersion: 2, type: "rematch", matchId: "match-1" }]);
     expect(host.match.rematches).toEqual(["match-1"]);
     expect(guest.match.rematches).toEqual(["match-1"]);
 
     host.sync.play({ type: "drop", col: 2 });
     await wire.flush();
-    expect(actions(host).at(-1)).toEqual({ protocolVersion: 1, type: "drop", revision: 1, col: 2 });
+    expect(actions(host).at(-1)).toEqual({ protocolVersion: 2, type: "drop", revision: 1, col: 2 });
     expect(guest.match.state.board).toEqual(host.match.state.board);
     expect(guest.transport.interrupts).toEqual([]);
   });
@@ -636,7 +636,7 @@ describe("rematch", () => {
     await playRedWin(ctx);
     host.transport.status = "resynchronizing";
 
-    host.transport.receive({ protocolVersion: 1, type: "rematch", matchId: "match-1" });
+    host.transport.receive({ protocolVersion: 2, type: "rematch", matchId: "match-1" });
     expect(host.sync.rematch()).toBe(false);
 
     expect(host.match.rematches).toEqual([]);
