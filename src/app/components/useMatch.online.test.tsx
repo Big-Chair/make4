@@ -186,7 +186,7 @@ async function startReadyMatch({ timerDuration = 0 }: { timerDuration?: number }
   const guest = renderPeer({ network, role: "guest", timerDuration });
 
   await act(async () => {
-    await host.room.create({ hostName: "Ana", timerDuration, token: DEFAULT_TOKEN });
+    await host.room.create({ hostName: "Ana", timerDuration, blastTokens: true, token: DEFAULT_TOKEN });
   });
   await act(async () => {
     await guest.room.join({ code: "ABCD", guestName: "Bo", token: DEFAULT_TOKEN });

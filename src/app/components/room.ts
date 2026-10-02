@@ -36,6 +36,9 @@ export interface RoomRecord {
   status: "waiting" | "playing" | "finished";
 }
 
+/** The host's Room rules: turn timer (0 = no timer) and whether Blast Tokens are on. */
+export type RoomRules = Pick<RoomRecord, "timerDuration" | "blastTokens">;
+
 /** Online players are `host` (red) or `yellow`'s `guest`. */
 export type Role = "host" | "guest";
 
@@ -126,7 +129,7 @@ export interface RoomLobby {
   pending: "create" | "join" | null;
   /** The open Room whose code and persisted rules the lobby shows: waiting for
    *  a guest, or both joined and synchronizing into a Ready Room. */
-  openRoom: { code: string; synchronizing: boolean; timerDuration: number; blastTokens: boolean } | null;
+  openRoom: ({ code: string; synchronizing: boolean } & RoomRules) | null;
   /** The local player's colour; red until a Role is known. */
   color: "red" | "yellow";
   /** Why the Room failed, or null. */
@@ -381,11 +384,7 @@ export interface OpenChannelInput {
  * in-memory implementation with controllable results and transitions.
  */
 export interface RoomAdapter {
-  createRoom(input: {
-    hostName: string;
-    timerDuration: number;
-    blastTokens?: boolean;
-  }): Promise<Result<RoomRecord>>;
+  createRoom(input: { hostName: string } & RoomRules): Promise<Result<RoomRecord>>;
   joinRoom(input: { code: string; guestName: string }): Promise<Result<RoomRecord>>;
   fetchRoom(code: string): Promise<Result<RoomRecord>>;
   openChannel(input: OpenChannelInput): RoomChannel;

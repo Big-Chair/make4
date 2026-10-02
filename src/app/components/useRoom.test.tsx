@@ -155,7 +155,7 @@ const readyTransitions = (phases: RoomState["phase"][]) =>
 async function hostRoom(adapter: RoomAdapter) {
   const view = renderRoom(adapter);
   await act(async () => {
-    await view.result.current.create({ hostName: "Ana", timerDuration: 40, token: RED });
+    await view.result.current.create({ hostName: "Ana", timerDuration: 40, blastTokens: true, token: RED });
   });
   return view;
 }
@@ -561,7 +561,7 @@ describe("cleanup", () => {
     const first = channel();
 
     await act(async () => {
-      await result.current.create({ hostName: "Ana", timerDuration: 40, token: RED });
+      await result.current.create({ hostName: "Ana", timerDuration: 40, blastTokens: true, token: RED });
     });
 
     expect(first.closeCount).toBe(1);
@@ -731,7 +731,7 @@ describe("interruption and reconnect", () => {
     const first = channel().tracked[0].clientId;
 
     await act(async () => {
-      await result.current.create({ hostName: "Ana", timerDuration: 40, token: RED });
+      await result.current.create({ hostName: "Ana", timerDuration: 40, blastTokens: true, token: RED });
     });
     act(() => channel().subscribed());
 
@@ -796,7 +796,7 @@ describe("lobby projection", () => {
 
     let created: Promise<void> | undefined;
     act(() => {
-      created = view.result.current.create({ hostName: "Ana", timerDuration: 40, token: RED });
+      created = view.result.current.create({ hostName: "Ana", timerDuration: 40, blastTokens: true, token: RED });
     });
     expect(view.result.current.lobby.pending).toBe("create");
     await act(async () => {

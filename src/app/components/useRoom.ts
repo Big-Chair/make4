@@ -56,6 +56,7 @@ import {
   type RoomMatchInput,
   type RoomPresence,
   type RoomRecord,
+  type RoomRules,
   type RoomState,
 } from "./room";
 import { supabaseRoomAdapter } from "./roomSupabaseAdapter";
@@ -67,6 +68,8 @@ export const RECONNECT_DEADLINE_MS = 20_000;
 
 type TransportStatus = OnlineMatchTransport["status"];
 
+type CreateRoomInput = { hostName: string; token: TokenConfig } & RoomRules;
+
 export interface UseRoomReturn {
   /** The full lifecycle — for the Room's own tests and diagnostics. Callers
    *  render `lobby` and start the Match from `match` instead of matching phases. */
@@ -75,8 +78,7 @@ export interface UseRoomReturn {
   lobby: RoomLobby;
   /** What an online Match starts from and renders; null before the Room was ever ready. */
   match: RoomMatchInput | null;
-  /** `timerDuration` 0 = no timer. `blastTokens` defaults to true. */
-  create(input: { hostName: string; timerDuration: number; blastTokens?: boolean; token: TokenConfig }): Promise<void>;
+  create(input: CreateRoomInput): Promise<void>;
   join(input: { code: string; guestName: string; token: TokenConfig }): Promise<void>;
   updateLocalToken(token: TokenConfig): void;
   leave(): Promise<void>;
@@ -451,17 +453,7 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
   // ── Commands ──
 
   const create = useCallback(
-    async ({
-      hostName,
-      timerDuration,
-      blastTokens = true,
-      token,
-    }: {
-      hostName: string;
-      timerDuration: number;
-      blastTokens?: boolean;
-      token: TokenConfig;
-    }) => {
+    async ({ hostName, timerDuration, blastTokens, token }: CreateRoomInput) => {
       void releaseGeneration();
       const generation = generationRef.current;
       lastReadyRoomRef.current = null;

@@ -6,9 +6,9 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OnlineLobby } from "./OnlineLobby";
-import type { RoomLobby } from "./room";
+import { projectLobby, type RoomLobby } from "./room";
 
-const IDLE_LOBBY: RoomLobby = { pending: null, openRoom: null, color: "red", error: null };
+const IDLE_LOBBY = projectLobby({ phase: "idle" });
 
 function renderLobby(lobby: RoomLobby = IDLE_LOBBY) {
   const onCreate = vi.fn(async () => {});
