@@ -19,6 +19,7 @@ import { SpeakerXMarkIcon, type SpeakerXMarkIconHandle } from "../../imports/spe
 import { TokenCustomizer } from "./TokenCustomizer";
 import { type TokenConfig, DEFAULT_TOKEN_RED, DEFAULT_TOKEN_YELLOW, getTokenVisuals, getSlotToken, save as saveToken } from "./tokens";
 import { g } from "./ThemeContext";
+import { SettingSwitch } from "./SettingSwitch";
 
 export type GameMode = "local" | "bot" | "online";
 
@@ -489,46 +490,19 @@ export function StartScreen({ onStart, score, onResetScore, leaderboardPlayerNam
                 {/* Timer & Sound Settings */}
                 <div className="flex items-center gap-3 rounded-xl px-4 py-3 mt-1 bg-g-surface-subtle border border-g-border-light">
                   {/* Timer toggle */}
-                  <div className="flex-1 flex items-center gap-2.5">
-                    <Timer size={18} color={timerMode === 40 ? "#1ABCFE" : g.textDim} />
-                    <span className="text-base font-medium transition-colors duration-200" style={{ color: timerMode === 40 ? g.textSecondary : g.textFaint }}>
-                      {timerMode === 40
-                        ? showNameEntry === "bot"
-                          ? `${({ easy: 40, medium: 35, hard: 30 } as Record<string, number>)[pendingDifficulty] ?? 40}s Timer`
-                          : "40s Timer"
-                        : "No Timer"}
-                    </span>
-                    <button
-                      onClick={() => setTimerMode(timerMode === 40 ? 0 : 40)}
-                      className="ml-auto relative cursor-pointer flex items-center"
-                      style={{
-                        width: "44px",
-                        height: "24px",
-                        borderRadius: "12px",
-                        background: timerMode === 40
-                          ? "rgba(26,188,254,0.3)"
-                          : g.surfaceHover,
-                        border: timerMode === 40
-                          ? "1px solid rgba(26,188,254,0.4)"
-                          : `1px solid ${g.borderLight}`,
-                        transition: "all 0.25s ease",
-                        padding: 0,
-                      }}
-                      aria-label="Toggle timer"
-                    >
-                      <div
-                        style={{
-                          width: "18px",
-                          height: "18px",
-                          borderRadius: "50%",
-                          background: timerMode === 40 ? "#1ABCFE" : g.textFaint,
-                          boxShadow: timerMode === 40 ? "0 0 8px rgba(26,188,254,0.5)" : "none",
-                          marginLeft: timerMode === 40 ? "23px" : "3px",
-                          transition: "all 0.25s ease",
-                        }}
-                      />
-                    </button>
-                  </div>
+                  <SettingSwitch
+                    on={timerMode === 40}
+                    onToggle={() => setTimerMode(timerMode === 40 ? 0 : 40)}
+                    label="Turn timer"
+                    onText={
+                      showNameEntry === "bot"
+                        ? `${({ easy: 40, medium: 35, hard: 30 } as Record<string, number>)[pendingDifficulty] ?? 40}s Timer`
+                        : "40s Timer"
+                    }
+                    offText="No Timer"
+                    icon={Timer}
+                    accent="#1ABCFE"
+                  />
 
                   {/* Divider */}
                   <div className="divider-v h-6" />

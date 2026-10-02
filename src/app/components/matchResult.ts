@@ -8,12 +8,17 @@
 import type { RoomMatchInput } from "./room";
 import type { GameMode } from "./StartScreen";
 
+/** Whether a Match with this turn timer is ranked on the leaderboard (0 = no timer, casual). */
+export function countsTowardLeaderboard(timerDuration: number): boolean {
+  return timerDuration > 0;
+}
+
 export function persistsMatchResult(opts: {
   gameMode: GameMode;
   timerDuration: number;
   room: Pick<RoomMatchInput, "live" | "role"> | null;
 }): boolean {
-  if (opts.timerDuration <= 0) return false;
+  if (!countsTowardLeaderboard(opts.timerDuration)) return false;
   if (opts.gameMode !== "online") return true;
   const { room } = opts;
   return !!room && room.live && room.role === "host";

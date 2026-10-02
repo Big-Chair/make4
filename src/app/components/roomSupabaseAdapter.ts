@@ -56,7 +56,7 @@ function createClientId(): string {
 const ACTIVE_ROOM_KEY = "make4_active_room";
 
 export const supabaseRoomAdapter: RoomAdapter = {
-  async createRoom({ hostName, timerDuration, blastTokens = true }) {
+  async createRoom({ hostName, timerDuration, blastTokens }) {
     return toRoomResult(await createRoom(hostName, timerDuration, blastTokens));
   },
 
