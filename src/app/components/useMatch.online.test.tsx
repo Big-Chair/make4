@@ -254,6 +254,80 @@ describe("action sequencing", () => {
   });
 });
 
+// ─── Turn timeout ───
+
+/** Advance time without delivering anything: messages stay in flight. */
+async function advance(ms: number) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms);
+  });
+}
+
+describe("turn timeout", () => {
+  it("ends the turn only from the clock of the player whose turn it is, as a revisioned Timeout", async () => {
+    const { network, host, guest, flush } = await startReadyMatch({ timerDuration: 40 });
+
+    // Hold the host's Timeout in flight: the guest's clock alone never passes the turn.
+    const held: RoomMessage[] = [];
+    network.lose = (message) => {
+      if (message.type !== "timeout") return false;
+      held.push(message);
+      return true;
+    };
+    await elapse(40_000);
+    expect(host.match.currentPlayer).toBe("yellow");
+    expect(guest.match.currentPlayer).toBe("red");
+    expect(guest.match.timer).toBe(0);
+    expect(sentOfType(guest, "timeout")).toHaveLength(0);
+
+    // The broadcast passes the turn and resets the guest's display clock.
+    network.lose = null;
+    for (const message of held) network.transmit(host.channel(), message);
+    await flush();
+
+    expect(held).toEqual([{ protocolVersion: 1, type: "timeout", revision: 1 }]);
+    expect(guest.match.currentPlayer).toBe("yellow");
+    expect(guest.match.timer).toBe(40);
+    expect(guest.room.matchTransport?.status).toBe("ready");
+
+    act(() => guest.match.drop(2));
+    await flush();
+    expect(sentActions(guest)).toEqual([{ protocolVersion: 1, type: "drop", revision: 2, col: 2 }]);
+    expect(host.match.board).toEqual(guest.match.board);
+    expect(host.room.matchTransport?.status).toBe("ready");
+  });
+
+  it("does not interrupt the Room for a move made just before the deadline on a lagging clock", async () => {
+    const { host, guest, flush } = await startReadyMatch({ timerDuration: 40 });
+
+    // The host's Drop reaches the guest 500 ms late, so the guest's clock for
+    // yellow's turn starts 500 ms after the host's.
+    act(() => host.match.drop(3));
+    await advance(500);
+    await flush();
+    expect(guest.match.currentPlayer).toBe("yellow");
+
+    // 39.6 s into the guest's turn by the host's clock; 39.1 s by the guest's.
+    await elapse(39_000);
+    await advance(100);
+    expect(guest.match.isMyTurn).toBe(true);
+    act(() => guest.match.drop(4));
+
+    // The Drop is in flight past the host's own deadline for yellow's turn.
+    await advance(500);
+    await flush();
+
+    // No repair ran, and the guest's Drop stands on both boards.
+    expect(sentOfType(host, "snapshot")).toHaveLength(0);
+    expect(host.room.matchTransport?.status).toBe("ready");
+    expect(guest.room.matchTransport?.status).toBe("ready");
+    expect(host.match.board[5][4]).toBe("yellow");
+    expect(host.match.board).toEqual(guest.match.board);
+    expect(host.match.currentPlayer).toBe("red");
+    expect(guest.match.currentPlayer).toBe("red");
+  });
+});
+
 // ─── Rejected local actions ───
 
 describe("rejected local actions", () => {
