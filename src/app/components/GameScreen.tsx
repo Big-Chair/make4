@@ -33,6 +33,8 @@ interface GameScreenProps {
   player1Name: string;
   player2Name: string;
   timerDuration: number;
+  /** Whether each player gets a Blast Token. Default true. */
+  blastTokens?: boolean;
   soundEnabled: boolean;
   onSoundToggle: () => void;
   onDifficultyChange?: (d: Difficulty) => void;
@@ -46,12 +48,12 @@ interface GameScreenProps {
   onP2TokenChange?: (config: TokenConfig) => void;
 }
 
-export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, player1Name, player2Name, timerDuration, soundEnabled, onSoundToggle, onDifficultyChange, p1Token, p2Token, transport, roomNotice = null, onP1TokenChange, onP2TokenChange }: GameScreenProps) {
+export function GameScreen({ onExit, gameMode, difficulty, score, onGameEnd, player1Name, player2Name, timerDuration, blastTokens = true, soundEnabled, onSoundToggle, onDifficultyChange, p1Token, p2Token, transport, roomNotice = null, onP1TokenChange, onP2TokenChange }: GameScreenProps) {
   const isMobile = useIsMobile();
 
   // The deep move pipeline: board state, turn legality, AI, online sync, countdown,
   // winner recording — all behind four verbs (drop / blast / autoBlast / reset).
-  const match = useMatch({ gameMode, difficulty, timerDuration, soundEnabled, transport, onGameEnd });
+  const match = useMatch({ gameMode, difficulty, timerDuration, blastTokens, soundEnabled, transport, onGameEnd });
 
   // Camera status for the toolbar toggle, read from the hand-tracking input.
   const handCamera = useHandCamera();
