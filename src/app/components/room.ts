@@ -13,7 +13,7 @@
  * Two rules this module exists to enforce:
  *  - Persisted Room data is authoritative for status, Role projection, player
  *    names, timer, and Blast-token configuration. Presence proves liveness only.
- *  - Every payload crossing the wire carries `protocolVersion: 1` and is decoded
+ *  - Every payload crossing the wire carries `protocolVersion: 2` and is decoded
  *    here. Application state never receives a cast of an arbitrary payload.
  *    Match messages are the exception that proves it: the Room checks their
  *    envelope and hands the payload to the Match, whose sync module
@@ -39,7 +39,7 @@ export interface RoomRecord {
 /** Online players are `host` (red) or `yellow`'s `guest`. */
 export type Role = "host" | "guest";
 
-export const PROTOCOL_VERSION = 1 as const;
+export const PROTOCOL_VERSION = 2 as const;
 
 /** The board color a Role plays. */
 export function colorFor(role: Role): "red" | "yellow" {
