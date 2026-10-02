@@ -75,7 +75,8 @@ export interface UseRoomReturn {
   lobby: RoomLobby;
   /** What an online Match starts from and renders; null before the Room was ever ready. */
   match: RoomMatchInput | null;
-  create(input: { hostName: string; timerDuration: number; token: TokenConfig }): Promise<void>;
+  /** `timerDuration` 0 = no timer. `blastTokens` defaults to true. */
+  create(input: { hostName: string; timerDuration: number; blastTokens?: boolean; token: TokenConfig }): Promise<void>;
   join(input: { code: string; guestName: string; token: TokenConfig }): Promise<void>;
   updateLocalToken(token: TokenConfig): void;
   leave(): Promise<void>;
@@ -453,10 +454,12 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
     async ({
       hostName,
       timerDuration,
+      blastTokens = true,
       token,
     }: {
       hostName: string;
       timerDuration: number;
+      blastTokens?: boolean;
       token: TokenConfig;
     }) => {
       void releaseGeneration();
@@ -467,7 +470,7 @@ export function useRoom(adapter: RoomAdapter = supabaseRoomAdapter): UseRoomRetu
         setInternal({ ...IDLE, lifecycle: "creating", localToken: token });
       }
 
-      const res = await adapter.createRoom({ hostName, timerDuration });
+      const res = await adapter.createRoom({ hostName, timerDuration, blastTokens });
       if (generationRef.current !== generation) return;
       if (!res.ok) {
         fail(generation, {

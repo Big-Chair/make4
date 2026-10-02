@@ -1,6 +1,6 @@
-import { useState, useRef } from "react";
+import { useState, useRef, type ReactNode } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Loader2, X, Copy, Check, Wifi, WifiOff, Clock, Activity, AlertTriangle, ChevronDown, Mail, MessageSquare, Link2, Gamepad2, QrCode, Smartphone } from "lucide-react";
+import { Loader2, X, Copy, Check, Wifi, WifiOff, Clock, Activity, AlertTriangle, ChevronDown, Mail, MessageSquare, Link2, Gamepad2, QrCode, Smartphone, Timer, TimerOff, Zap } from "lucide-react";
 import { ArrowRightIcon, type ArrowRightIconHandle } from "../../imports/arrow-right-icon";
 import { UserIcon, type UserIconHandle } from "../../imports/user-icon";
 import { UsersIcon, type UsersIconHandle } from "../../imports/users-icon";
@@ -29,6 +29,66 @@ interface OnlineLobbyProps {
 
 type LobbyView = "choose" | "join" | "waiting";
 
+/** An online Room's turn timer when the host leaves it on (the leaderboard's 40s level). */
+const ONLINE_TIMER_SECONDS = 40;
+
+/** A Room's persisted rules as one line, e.g. "40s timer · Blast tokens on". */
+function roomRulesLabel(rules: { timerDuration: number; blastTokens: boolean }): string {
+  const timer = rules.timerDuration > 0 ? `${rules.timerDuration}s timer` : "No timer";
+  return `${timer} · ${rules.blastTokens ? "Blast tokens on" : "No Blast tokens"}`;
+}
+
+/** An on/off switch row, styled like the start screen's timer toggle. */
+function SettingSwitch(opts: {
+  on: boolean;
+  onToggle: () => void;
+  label: string;
+  onText: string;
+  offText: string;
+  icon: (on: boolean) => ReactNode;
+  accent: string;
+  accentSoft: string;
+}) {
+  const { on, onToggle, label, onText, offText, icon, accent, accentSoft } = opts;
+  return (
+    <div className="flex-1 flex items-center gap-2.5">
+      {icon(on)}
+      <span className="text-base font-medium transition-colors duration-200" style={{ color: on ? g.textSecondary : g.textFaint }}>
+        {on ? onText : offText}
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={label}
+        onClick={onToggle}
+        className="ml-auto relative cursor-pointer flex items-center flex-shrink-0"
+        style={{
+          width: "44px",
+          height: "24px",
+          borderRadius: "12px",
+          background: on ? accentSoft : g.surfaceHover,
+          border: on ? `1px solid ${accent}66` : `1px solid ${g.borderLight}`,
+          transition: "all 0.25s ease",
+          padding: 0,
+        }}
+      >
+        <div
+          style={{
+            width: "18px",
+            height: "18px",
+            borderRadius: "50%",
+            background: on ? accent : g.textFaint,
+            boxShadow: on ? `0 0 8px ${accent}80` : "none",
+            marginLeft: on ? "23px" : "3px",
+            transition: "all 0.25s ease",
+          }}
+        />
+      </button>
+    </div>
+  );
+}
+
 export function OnlineLobby({ lobby, onCreate, onJoin, onLeave, onTokenChange, initialRoomCode, siteStats, onBack }: OnlineLobbyProps) {
   // If we have an initial room code from a shared link, start in "join" view
   const [view, setView] = useState<LobbyView>(initialRoomCode ? "join" : "choose");
@@ -40,6 +100,9 @@ export function OnlineLobby({ lobby, onCreate, onJoin, onLeave, onTokenChange, i
   const [playerToken, setPlayerToken] = useState<TokenConfig>(() => getSlotToken("p1") ?? DEFAULT_TOKEN_RED);
   const [customizingToken, setCustomizingToken] = useState(false);
   const [showHowToPlay, setShowHowToPlay] = useState(false);
+  // The host's Room rules, persisted with the Room so the guest plays by them too.
+  const [timerOn, setTimerOn] = useState(true);
+  const [blastsOn, setBlastsOn] = useState(true);
 
   const arrowRef = useRef<ArrowRightIconHandle>(null);
   const pencilRef = useRef<PencilIconHandle>(null);
@@ -59,7 +122,12 @@ export function OnlineLobby({ lobby, onCreate, onJoin, onLeave, onTokenChange, i
   const handleCreateRoom = async () => {
     const name = playerName.trim() || "Player 1";
     rememberName(name);
-    await onCreate({ hostName: name, timerDuration: 40, token: playerToken });
+    await onCreate({
+      hostName: name,
+      timerDuration: timerOn ? ONLINE_TIMER_SECONDS : 0,
+      blastTokens: blastsOn,
+      token: playerToken,
+    });
   };
 
   const handleJoinRoom = async () => {
@@ -196,6 +264,33 @@ export function OnlineLobby({ lobby, onCreate, onJoin, onLeave, onTokenChange, i
                   className="flex-1 rounded-xl px-4 py-3 outline-none bg-g-input-bg border border-g-input-border text-g-input-text text-base"
                 />
               </div>
+
+              {/* Room rules: persisted with the Room, so the guest plays by them too */}
+              <div className="flex flex-col gap-3 rounded-xl px-4 py-3 bg-g-surface-subtle border border-g-border-light">
+                <SettingSwitch
+                  on={timerOn}
+                  onToggle={() => setTimerOn((on) => !on)}
+                  label="Turn timer"
+                  onText={`${ONLINE_TIMER_SECONDS}s Timer`}
+                  offText="No Timer"
+                  icon={(on) => (on ? <Timer size={18} color="#1ABCFE" /> : <TimerOff size={18} color={g.textDim} />)}
+                  accent="#1ABCFE"
+                  accentSoft="rgba(26,188,254,0.3)"
+                />
+                <SettingSwitch
+                  on={blastsOn}
+                  onToggle={() => setBlastsOn((on) => !on)}
+                  label="Blast tokens"
+                  onText="Blast Tokens"
+                  offText="No Blasts"
+                  icon={(on) => <Zap size={18} color={on ? "#A259FF" : g.textDim} />}
+                  accent="#A259FF"
+                  accentSoft="rgba(162,89,255,0.3)"
+                />
+              </div>
+              <span className="-mt-2 px-1 text-sm" style={{ color: timerOn ? g.textDim : g.textFaint }}>
+                {timerOn ? "Wins count toward the leaderboard" : "Casual room — not tracked on leaderboard"}
+              </span>
 
               {/* Create Room */}
               <motion.button
@@ -523,6 +618,10 @@ export function OnlineLobby({ lobby, onCreate, onJoin, onLeave, onTokenChange, i
                     {openRoom.code}
                   </span>
                 </div>
+
+                <p className="text-center text-sm mb-4 -mt-2" style={{ color: g.textDim }}>
+                  {roomRulesLabel(openRoom)}
+                </p>
 
                 <div className="flex items-center justify-center gap-2">
                   <motion.button

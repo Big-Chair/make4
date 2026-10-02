@@ -83,6 +83,7 @@ function createFakeAdapter() {
     joinResult: { ok: true, data: playingRecord() } as Result<RoomRecord>,
     fetchResult: { ok: true, data: roomRecord() } as Result<RoomRecord>,
     fetchCalls: 0,
+    createInputs: [] as Parameters<RoomAdapter["createRoom"]>[0][],
     joinedCodes: [] as string[],
     channels: [] as FakeChannel[],
     clientIdsCreated: 0,
@@ -91,7 +92,8 @@ function createFakeAdapter() {
   };
 
   const adapter: RoomAdapter = {
-    async createRoom() {
+    async createRoom(input) {
+      state.createInputs.push(input);
       return state.createResult;
     },
     async joinRoom({ code }) {
@@ -802,7 +804,7 @@ describe("lobby projection", () => {
     });
     expect(view.result.current.lobby).toEqual({
       pending: null,
-      openRoom: { code: "ABCD", synchronizing: false },
+      openRoom: { code: "ABCD", synchronizing: false, timerDuration: 40, blastTokens: true },
       color: "red",
       error: null,
     });
@@ -812,7 +814,7 @@ describe("lobby projection", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
-    expect(view.result.current.lobby.openRoom).toEqual({ code: "ABCD", synchronizing: true });
+    expect(view.result.current.lobby.openRoom).toMatchObject({ code: "ABCD", synchronizing: true });
 
     act(() => channel().presence([presence("host", { token: RED }), presence("guest", { token: BLUE })]));
     // Ready: the lobby no longer owns the view; the Match starts.
@@ -823,7 +825,26 @@ describe("lobby projection", () => {
     const { adapter } = createFakeAdapter();
     const { result } = await guestRoom(adapter);
     expect(result.current.lobby.color).toBe("yellow");
-    expect(result.current.lobby.openRoom).toEqual({ code: "ABCD", synchronizing: true });
+    expect(result.current.lobby.openRoom).toMatchObject({ code: "ABCD", synchronizing: true });
+  });
+
+  it("creates the Room with the host's timer and Blast-token choice", async () => {
+    const { adapter, state } = createFakeAdapter();
+    state.createResult = { ok: true, data: roomRecord({ timerDuration: 0, blastTokens: false }) };
+    const { result } = renderRoom(adapter);
+    await act(async () => {
+      await result.current.create({ hostName: "Ana", timerDuration: 0, blastTokens: false, token: RED });
+    });
+    expect(state.createInputs).toEqual([{ hostName: "Ana", timerDuration: 0, blastTokens: false }]);
+    // The open Room shows its persisted rules, so a guest sees what they joined.
+    expect(result.current.lobby.openRoom).toMatchObject({ timerDuration: 0, blastTokens: false });
+  });
+
+  it("shows a joining guest the Room's persisted rules", async () => {
+    const { adapter, state } = createFakeAdapter();
+    state.joinResult = { ok: true, data: playingRecord({ timerDuration: 40, blastTokens: false }) };
+    const { result } = await guestRoom(adapter);
+    expect(result.current.lobby.openRoom).toMatchObject({ timerDuration: 40, blastTokens: false });
   });
 
   it("shows why the Room failed", async () => {
